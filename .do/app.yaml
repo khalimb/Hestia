@@ -1,0 +1,39 @@
+name: hestia
+region: lon
+services:
+  - name: web
+    github:
+      repo: khalimb/Hestia
+      branch: main
+      deploy_on_push: true
+    build_command: bash bin/build.sh
+    run_command: gunicorn hestia_project.wsgi --bind 0.0.0.0:8080 --workers 2
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    envs:
+      - key: SECRET_KEY
+        type: SECRET
+        value: "CHANGE_ME"
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: "${APP_DOMAIN}"
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://${APP_DOMAIN}"
+      - key: CSRF_TRUSTED_ORIGINS
+        value: "https://${APP_DOMAIN}"
+      - key: SECURE_SSL_REDIRECT
+        value: "False"
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: "${db.DATABASE_URL}"
+      - key: PYTHON_VERSION
+        value: "3.12"
+databases:
+  - name: db
+    engine: PG
+    production: false
+    cluster_name: hestia-db
+    db_name: hestia
+    db_user: hestia
