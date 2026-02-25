@@ -22,13 +22,6 @@ mkdir -p templates
 cp frontend/dist/index.html templates/index.html
 
 echo "==> Collecting static files..."
-python manage.py collectstatic --noinput
+DISABLE_COLLECTSTATIC=0 DATABASE_URL="sqlite:///tmp/throwaway.db" python manage.py collectstatic --noinput
 
-echo "==> Running database migrations..."
-python manage.py migrate --noinput
-
-echo "==> Seeding default data..."
-python manage.py seed_expense_types
-python manage.py seed_subjects
-
-echo "==> Build complete."
+echo "==> Build complete (migrations run at startup)."
