@@ -22,6 +22,7 @@ mkdir -p templates
 cp frontend/dist/index.html templates/index.html
 
 echo "==> Collecting static files..."
-DISABLE_COLLECTSTATIC=0 DATABASE_URL="sqlite:///tmp/throwaway.db" python manage.py collectstatic --noinput
+# Unset DATABASE_URL so Django falls back to SQLite (no PG needed at build time)
+DATABASE_URL="" python manage.py collectstatic --noinput
 
 echo "==> Build complete (migrations run at startup)."

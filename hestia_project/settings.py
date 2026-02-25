@@ -69,20 +69,11 @@ WSGI_APPLICATION = 'hestia_project.wsgi.application'
 
 # Database
 # Use DATABASE_URL env var for production (PostgreSQL), fall back to SQLite for local dev.
-# Guard against unresolved DO template variables like "${db.DATABASE_URL}".
-_db_url = os.environ.get('DATABASE_URL', '')
-_db_url_valid = _db_url and '://' in _db_url and '${' not in _db_url
-
-if _db_url_valid:
-    # DO App Platform dev databases do not support SSL; managed (production)
-    # clusters do.  Default to requiring SSL only when REQUIRE_DB_SSL is
-    # explicitly set; otherwise rely on whatever the DATABASE_URL dictates.
-    _ssl = os.environ.get('REQUIRE_DB_SSL', 'false').lower() in ('true', '1')
+if os.environ.get('DATABASE_URL'):
     DATABASES = {
         'default': dj_database_url.config(
-            default=_db_url,
+            default=os.environ['DATABASE_URL'],
             conn_max_age=600,
-            ssl_require=_ssl,
         )
     }
 else:

@@ -34,6 +34,3 @@ databases:
   - name: db
     engine: PG
     production: false
-    cluster_name: hestia-db
-    db_name: hestia
-    db_user: hestia
