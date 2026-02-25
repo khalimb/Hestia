@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "==> Ensuring database schema permissions..."
-python << 'PYEOF'
+# ── Helper: check whether DATABASE_URL looks like a real connection string ──
+db_ready() {
+    python -c "
+import os, sys
+url = os.environ.get('DATABASE_URL', '')
+# Unresolved DO template variables or empty string → not ready
+if not url or '\${' in url or '://' not in url:
+    sys.exit(1)
+"
+}
+
+if db_ready; then
+    echo "==> Ensuring database schema permissions..."
+    python << 'PYEOF' || true
 import psycopg2, os, urllib.parse
 
 db_url  = os.environ['DATABASE_URL']
@@ -13,7 +25,6 @@ conn = psycopg2.connect(db_url)
 conn.autocommit = True
 cur = conn.cursor()
 
-# Check if the user can already create in 'public'
 cur.execute("""
     SELECT has_schema_privilege(%s, 'public', 'CREATE')
 """, (db_user,))
@@ -23,8 +34,6 @@ if can_create:
     print("User '%s' already has CREATE on public schema – good." % db_user)
 else:
     print("User '%s' lacks CREATE on public – attempting fixes..." % db_user)
-
-    # Attempt 1: GRANT directly (works if user owns the database)
     try:
         cur.execute('GRANT CREATE ON SCHEMA public TO "%s"' % db_user)
         print("  -> GRANT succeeded.")
@@ -32,7 +41,6 @@ else:
         print("  -> GRANT failed: %s" % e)
         conn.rollback()
 
-        # Attempt 2: create a user-owned schema and adjust search_path
         schema = db_user.replace('-', '_')
         cur.execute(
             'CREATE SCHEMA IF NOT EXISTS "%s" AUTHORIZATION "%s"'
@@ -42,20 +50,23 @@ else:
             'ALTER ROLE "%s" SET search_path TO "%s", public'
             % (db_user, schema)
         )
-        # Apply to the current session too
         cur.execute('SET search_path TO "%s", public' % schema)
         print("  -> Created schema '%s' and set search_path." % schema)
 
 conn.close()
 PYEOF
 
-echo "==> Running database migrations..."
-python manage.py migrate --noinput
+    echo "==> Running database migrations..."
+    python manage.py migrate --noinput
 
-echo "==> Seeding default data..."
-python manage.py seed_expense_types || true
-python manage.py seed_categories   || true
-python manage.py seed_subjects     || true
+    echo "==> Seeding default data..."
+    python manage.py seed_expense_types || true
+    python manage.py seed_categories   || true
+    python manage.py seed_subjects     || true
+else
+    echo "==> DATABASE_URL not ready (database component may not be attached yet)."
+    echo "    Skipping migrations and seeds — the app will start without a DB."
+fi
 
 echo "==> Starting gunicorn..."
 exec gunicorn hestia_project.wsgi --bind 0.0.0.0:8080 --workers 2
