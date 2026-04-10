@@ -24,7 +24,10 @@ class Command(BaseCommand):
         overdue_count = 0
 
         for expense in expenses:
-            dates = self._get_occurrence_dates(expense, today, horizon)
+            # Use a per-expense horizon that guarantees at least one future
+            # occurrence for infrequent recurrences (biannual, annual, biennial)
+            expense_horizon = self._expense_horizon(expense, today, horizon)
+            dates = self._get_occurrence_dates(expense, today, expense_horizon)
             for d in dates:
                 _, created = Occurrence.objects.get_or_create(
                     expense=expense,
@@ -90,6 +93,21 @@ class Command(BaseCommand):
             max_day = self._days_in_month(next_date)
             next_date = next_date.replace(day=min(target_day, max_day))
         return next_date
+
+    def _expense_horizon(self, expense, today, default_horizon):
+        """Ensure the horizon extends far enough that at least one future
+        occurrence can be generated, even for infrequent recurrences."""
+        min_horizons = {
+            'weekly': 90,
+            'monthly': 90,
+            'quarterly': 365,
+            'biannual': 365,
+            'annual': 730,
+            'biennial': 1095,
+        }
+        min_days = min_horizons.get(expense.recurrence_type, 90)
+        min_horizon = today + timedelta(days=min_days)
+        return max(default_horizon, min_horizon)
 
     def _days_in_month(self, d):
         if d.month == 12:

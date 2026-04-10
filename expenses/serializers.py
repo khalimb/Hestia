@@ -53,10 +53,17 @@ class ExpenseSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
 
     def get_next_occurrence(self, obj):
+        today = timezone.now().date()
+        # Prefer the next upcoming unpaid occurrence
         occ = obj.occurrences.filter(
-            due_date__gte=timezone.now().date(),
+            due_date__gte=today,
             status__in=['pending', 'overdue'],
         ).first()
+        if not occ:
+            # Fall back to the most recent unpaid occurrence (overdue)
+            occ = obj.occurrences.filter(
+                status__in=['pending', 'overdue'],
+            ).order_by('-due_date').first()
         if occ:
             return OccurrenceSerializer(occ).data
         return None
