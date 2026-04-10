@@ -73,9 +73,37 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def generate_occurrences(self, request):
         """Manually trigger occurrence generation, bypassing the cooldown."""
-        force_generate_occurrences()
-        count = Occurrence.objects.count()
-        return Response({'detail': f'Occurrences generated. Total: {count}.'})
+        from datetime import timedelta
+        from django.utils import timezone as tz
+
+        active_expenses = Expense.objects.filter(is_active=True)
+        expense_info = []
+        for exp in active_expenses:
+            expense_info.append({
+                'name': exp.name,
+                'recurrence_type': exp.recurrence_type,
+                'start_date': str(exp.start_date),
+                'end_date': str(exp.end_date) if exp.end_date else None,
+                'is_active': exp.is_active,
+            })
+
+        try:
+            force_generate_occurrences()
+            error_msg = None
+        except Exception as e:
+            error_msg = str(e)
+
+        total = Occurrence.objects.count()
+        today = tz.now().date()
+        pending = Occurrence.objects.filter(status='pending', due_date__gte=today).count()
+
+        return Response({
+            'active_expenses': len(expense_info),
+            'expenses': expense_info,
+            'total_occurrences': total,
+            'pending_upcoming': pending,
+            'error': error_msg,
+        })
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)

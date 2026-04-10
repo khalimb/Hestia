@@ -35,10 +35,16 @@ async function handleGenerate() {
   generateMessage.value = ''
   try {
     const data = await store.generateOccurrences()
-    generateMessage.value = data.detail
+    const parts = [
+      `Active expenses: ${data.active_expenses}`,
+      `Total occurrences: ${data.total_occurrences}`,
+      `Pending/upcoming: ${data.pending_upcoming}`,
+    ]
+    if (data.error) parts.push(`Error: ${data.error}`)
+    generateMessage.value = parts.join(' | ')
     await store.fetchExpenses()
-  } catch {
-    generateMessage.value = 'Failed to generate occurrences.'
+  } catch (e) {
+    generateMessage.value = `Failed: ${e.response?.data?.detail || e.message}`
   } finally {
     generating.value = false
   }
