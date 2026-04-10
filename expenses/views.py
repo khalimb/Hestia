@@ -72,29 +72,67 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def generate_occurrences(self, request):
-        """Manually trigger occurrence generation, bypassing the cooldown."""
+        """Manually trigger occurrence generation with diagnostics."""
         from datetime import timedelta
+        from dateutil.relativedelta import relativedelta
         from django.utils import timezone as tz
+
+        today = tz.now().date()
+        horizon = today + timedelta(days=90)
 
         active_expenses = Expense.objects.filter(is_active=True)
         expense_info = []
         for exp in active_expenses:
+            # Reproduce the date logic inline to diagnose
+            effective_start = max(exp.start_date, today - timedelta(days=30))
+            effective_end = exp.end_date if exp.end_date and exp.end_date < horizon else horizon
+
+            step_map = {
+                'weekly': relativedelta(weeks=1),
+                'monthly': relativedelta(months=1),
+                'quarterly': relativedelta(months=3),
+                'biannual': relativedelta(months=6),
+                'annual': relativedelta(years=1),
+                'biennial': relativedelta(years=2),
+            }
+            step = step_map.get(exp.recurrence_type)
+
+            # Walk forward and collect dates
+            dates = []
+            current = exp.start_date
+            iterations = 0
+            while current <= effective_end and iterations < 10000:
+                if current >= effective_start:
+                    dates.append(str(current))
+                next_date = current + step
+                if exp.recurrence_type != 'weekly':
+                    from calendar import monthrange
+                    _, max_day = monthrange(next_date.year, next_date.month)
+                    next_date = next_date.replace(day=min(exp.start_date.day, max_day))
+                current = next_date
+                iterations += 1
+
             expense_info.append({
                 'name': exp.name,
                 'recurrence_type': exp.recurrence_type,
                 'start_date': str(exp.start_date),
                 'end_date': str(exp.end_date) if exp.end_date else None,
-                'is_active': exp.is_active,
+                'today': str(today),
+                'effective_start': str(effective_start),
+                'effective_end': str(effective_end),
+                'step': str(step),
+                'dates_generated': dates,
+                'iterations': iterations,
             })
 
         try:
             force_generate_occurrences()
             error_msg = None
         except Exception as e:
-            error_msg = str(e)
+            import traceback
+            error_msg = traceback.format_exc()
 
         total = Occurrence.objects.count()
-        today = tz.now().date()
         pending = Occurrence.objects.filter(status='pending', due_date__gte=today).count()
 
         return Response({
