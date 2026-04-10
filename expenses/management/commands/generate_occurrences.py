@@ -54,17 +54,17 @@ class Command(BaseCommand):
         if expense.start_date > end:
             return dates
 
-        effective_start = max(expense.start_date, start - timedelta(days=30))
         effective_end = expense.end_date if expense.end_date and expense.end_date < end else end
 
         # Determine the step interval based on recurrence type
         step = self._get_step(expense.recurrence_type)
 
-        # Walk forward from start_date in fixed steps until we pass effective_end
+        # Walk forward from start_date in fixed steps until we pass effective_end.
+        # We collect all dates from start_date onward — get_or_create in the
+        # caller handles duplicates, and the horizon bounds the upper end.
         current = expense.start_date
         while current <= effective_end:
-            if current >= effective_start:
-                dates.append(current)
+            dates.append(current)
             current = self._advance(current, expense, step)
 
         return dates

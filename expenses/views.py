@@ -84,7 +84,6 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         expense_info = []
         for exp in active_expenses:
             # Reproduce the date logic inline to diagnose
-            effective_start = max(exp.start_date, today - timedelta(days=30))
             effective_end = exp.end_date if exp.end_date and exp.end_date < horizon else horizon
 
             step_map = {
@@ -102,8 +101,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             current = exp.start_date
             iterations = 0
             while current <= effective_end and iterations < 10000:
-                if current >= effective_start:
-                    dates.append(str(current))
+                dates.append(str(current))
                 next_date = current + step
                 if exp.recurrence_type != 'weekly':
                     from calendar import monthrange
@@ -118,7 +116,6 @@ class ExpenseViewSet(viewsets.ModelViewSet):
                 'start_date': str(exp.start_date),
                 'end_date': str(exp.end_date) if exp.end_date else None,
                 'today': str(today),
-                'effective_start': str(effective_start),
                 'effective_end': str(effective_end),
                 'step': str(step),
                 'dates_generated': dates,
