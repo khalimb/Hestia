@@ -4,10 +4,12 @@ from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from expenses.models import Expense, Occurrence
+from expenses.services import ensure_occurrences_generated
 
 
 class DashboardSummaryView(APIView):
     def get(self, request):
+        ensure_occurrences_generated()
         today = timezone.now().date()
         first_of_month = today.replace(day=1)
         if today.month == 12:

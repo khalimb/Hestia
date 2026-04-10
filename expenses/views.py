@@ -8,6 +8,7 @@ from .serializers import (
     SubjectSerializer, ExpenseTypeSerializer, ExpenseSerializer,
     ExpenseDetailSerializer, OccurrenceSerializer,
 )
+from .services import ensure_occurrences_generated
 
 
 class SubjectViewSet(viewsets.ModelViewSet):
@@ -59,6 +60,10 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     filterset_fields = ['subject', 'expense_type', 'is_active', 'currency', 'recurrence_type']
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'amount', 'created_at']
+
+    def list(self, request, *args, **kwargs):
+        ensure_occurrences_generated()
+        return super().list(request, *args, **kwargs)
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
