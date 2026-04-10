@@ -15,6 +15,25 @@ const error = ref('')
 const uploadingBill = ref(false)
 const fileInput = ref(null)
 
+// Mark paid
+const markingPaid = ref({})
+
+async function markAsPaid(occ) {
+  markingPaid.value[occ.id] = true
+  try {
+    await api.post(`occurrences/${occ.id}/payments/`, {
+      amount_paid: occ.expected_amount,
+      currency: occ.currency,
+      paid_date: new Date().toISOString().split('T')[0],
+    })
+    await fetchData()
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to mark as paid')
+  } finally {
+    delete markingPaid.value[occ.id]
+  }
+}
+
 onMounted(async () => {
   await fetchData()
 })
@@ -162,6 +181,13 @@ function formatFileSize(bytes) {
                 <td class="text-right font-mono">{{ formatCurrency(occ.total_paid, occ.currency) }}</td>
                 <td><span :class="statusBadgeClass(occ.status)">{{ occ.status }}</span></td>
                 <td class="text-right">
+                  <button
+                    v-if="occ.status !== 'paid'"
+                    class="btn btn-sm btn-primary"
+                    :disabled="markingPaid[occ.id]"
+                    @click="markAsPaid(occ)"
+                    style="margin-right: 0.25rem"
+                  >{{ markingPaid[occ.id] ? 'Saving...' : 'Mark Paid' }}</button>
                   <RouterLink :to="`/occurrences/${occ.id}`" class="btn btn-sm btn-outline">View</RouterLink>
                 </td>
               </tr>

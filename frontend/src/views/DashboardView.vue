@@ -1,17 +1,35 @@
 <script setup>
-import { onMounted, computed } from 'vue'
+import { onMounted, computed, ref } from 'vue'
 import { useDashboardStore } from '../stores/dashboard'
 import { Pie } from 'vue-chartjs'
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js'
 import { format, differenceInDays, parseISO, isToday, isTomorrow } from 'date-fns'
+import api from '../api/axios'
 
 ChartJS.register(ArcElement, Tooltip, Legend)
 
 const dashboard = useDashboardStore()
+const markingPaid = ref({})
 
 onMounted(() => {
   dashboard.fetchAll()
 })
+
+async function markAsPaid(item) {
+  markingPaid.value[item.id] = true
+  try {
+    await api.post(`occurrences/${item.id}/payments/`, {
+      amount_paid: item.expected_amount,
+      currency: item.currency,
+      paid_date: new Date().toISOString().split('T')[0],
+    })
+    await dashboard.fetchAll()
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to mark as paid')
+  } finally {
+    delete markingPaid.value[item.id]
+  }
+}
 
 const CHART_COLORS = ['#f97316', '#10b981', '#3b82f6', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f59e0b', '#06b6d4', '#84cc16']
 
@@ -138,6 +156,13 @@ function dueDateClass(item) {
                   <td class="text-right" :class="dueDateClass(item)">
                     <span class="text-sm">{{ formatDueDate(item.due_date) }}</span>
                   </td>
+                  <td class="text-right">
+                    <button
+                      class="btn btn-sm btn-primary"
+                      :disabled="markingPaid[item.id]"
+                      @click="markAsPaid(item)"
+                    >{{ markingPaid[item.id] ? 'Saving...' : 'Mark Paid' }}</button>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -160,6 +185,7 @@ function dueDateClass(item) {
                 <th class="text-right">Amount</th>
                 <th class="text-right">Due Date</th>
                 <th class="text-right">Days Overdue</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -176,6 +202,13 @@ function dueDateClass(item) {
                 <td class="text-right font-mono">{{ formatCurrency(item.expected_amount, item.currency) }}</td>
                 <td class="text-right">{{ format(parseISO(item.due_date), 'dd MMM yyyy') }}</td>
                 <td class="text-right text-danger font-mono">{{ item.days_overdue }}d</td>
+                <td class="text-right">
+                  <button
+                    class="btn btn-sm btn-primary"
+                    :disabled="markingPaid[item.id]"
+                    @click="markAsPaid(item)"
+                  >{{ markingPaid[item.id] ? 'Saving...' : 'Mark Paid' }}</button>
+                </td>
               </tr>
             </tbody>
           </table>
