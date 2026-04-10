@@ -41,7 +41,9 @@ class Expense(models.Model):
         ('weekly', 'Weekly'),
         ('monthly', 'Monthly'),
         ('quarterly', 'Quarterly'),
+        ('biannual', 'Biannual'),
         ('annual', 'Annual'),
+        ('biennial', 'Biennial'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

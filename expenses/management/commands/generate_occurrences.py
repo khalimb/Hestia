@@ -96,6 +96,24 @@ class Command(BaseCommand):
                         dates.append(occ_date)
                 current += relativedelta(months=1)
 
+        elif expense.recurrence_type == 'biannual':
+            # Twice per year: recurrence_month sets the first month,
+            # the second occurrence is 6 months later.
+            first_month = expense.recurrence_month or 1
+            second_month = ((first_month - 1 + 6) % 12) + 1
+            current = effective_start.replace(day=1)
+            while current <= effective_end:
+                if current.month in (first_month, second_month):
+                    try:
+                        occ_date = current.replace(
+                            day=min(expense.recurrence_day, self._days_in_month(current))
+                        )
+                    except ValueError:
+                        occ_date = current.replace(day=self._days_in_month(current))
+                    if expense.start_date <= occ_date <= effective_end:
+                        dates.append(occ_date)
+                current += relativedelta(months=1)
+
         elif expense.recurrence_type == 'annual':
             current_year = effective_start.year
             while current_year <= effective_end.year:
@@ -111,6 +129,27 @@ class Command(BaseCommand):
                 if expense.start_date <= occ_date <= effective_end:
                     dates.append(occ_date)
                 current_year += 1
+
+        elif expense.recurrence_type == 'biennial':
+            # Every two years
+            current_year = effective_start.year
+            # Align to the correct biennial cycle from start_date
+            start_year = expense.start_date.year
+            if (current_year - start_year) % 2 != 0:
+                current_year += 1
+            while current_year <= effective_end.year:
+                month = expense.recurrence_month or 1
+                try:
+                    occ_date = date(
+                        current_year, month,
+                        min(expense.recurrence_day, self._days_in_month(date(current_year, month, 1)))
+                    )
+                except ValueError:
+                    current_year += 2
+                    continue
+                if expense.start_date <= occ_date <= effective_end:
+                    dates.append(occ_date)
+                current_year += 2
 
         return dates
 

@@ -53,7 +53,7 @@ onMounted(async () => {
 })
 
 const showMonthField = computed(() =>
-  ['quarterly', 'annual'].includes(form.value.recurrence_type)
+  ['quarterly', 'biannual', 'annual', 'biennial'].includes(form.value.recurrence_type)
 )
 
 const dayLabel = computed(() =>
@@ -151,7 +151,9 @@ async function handleSubmit() {
                 <option value="weekly">Weekly</option>
                 <option value="monthly">Monthly</option>
                 <option value="quarterly">Quarterly</option>
+                <option value="biannual">Biannual</option>
                 <option value="annual">Annual</option>
+                <option value="biennial">Biennial</option>
               </select>
             </div>
             <div class="form-group">
