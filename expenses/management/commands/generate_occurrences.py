@@ -49,6 +49,7 @@ class Command(BaseCommand):
         ))
 
     def _get_occurrence_dates(self, expense, start, end):
+        """Generate occurrence dates by stepping forward from start_date."""
         dates = []
         if expense.start_date > end:
             return dates
@@ -56,113 +57,42 @@ class Command(BaseCommand):
         effective_start = max(expense.start_date, start - timedelta(days=30))
         effective_end = expense.end_date if expense.end_date and expense.end_date < end else end
 
-        if expense.recurrence_type == 'weekly':
-            current = effective_start
-            # Align to the correct day of week
-            days_ahead = expense.recurrence_day - current.weekday()
-            if days_ahead < 0:
-                days_ahead += 7
-            current = current + timedelta(days=days_ahead)
-            while current <= effective_end:
-                if current >= expense.start_date:
-                    dates.append(current)
-                current += timedelta(weeks=1)
+        # Determine the step interval based on recurrence type
+        step = self._get_step(expense.recurrence_type)
 
-        elif expense.recurrence_type == 'monthly':
-            current = effective_start.replace(day=1)
-            while current <= effective_end:
-                try:
-                    occ_date = current.replace(day=min(expense.recurrence_day, self._days_in_month(current)))
-                except ValueError:
-                    occ_date = current.replace(day=self._days_in_month(current))
-                if expense.start_date <= occ_date <= effective_end:
-                    dates.append(occ_date)
-                current += relativedelta(months=1)
-
-        elif expense.recurrence_type == 'quarterly':
-            current = effective_start.replace(day=1)
-            while current <= effective_end:
-                if expense.recurrence_month and current.month == expense.recurrence_month:
-                    pass  # This is a quarter start month
-                quarter_months = self._get_quarter_months(expense.recurrence_month or 1)
-                if current.month in quarter_months:
-                    try:
-                        occ_date = current.replace(
-                            day=min(expense.recurrence_day, self._days_in_month(current))
-                        )
-                    except ValueError:
-                        occ_date = current.replace(day=self._days_in_month(current))
-                    if expense.start_date <= occ_date <= effective_end:
-                        dates.append(occ_date)
-                current += relativedelta(months=1)
-
-        elif expense.recurrence_type == 'biannual':
-            # Twice per year: recurrence_month sets the first month,
-            # the second occurrence is 6 months later.
-            first_month = expense.recurrence_month or 1
-            second_month = ((first_month - 1 + 6) % 12) + 1
-            current = effective_start.replace(day=1)
-            while current <= effective_end:
-                if current.month in (first_month, second_month):
-                    try:
-                        occ_date = current.replace(
-                            day=min(expense.recurrence_day, self._days_in_month(current))
-                        )
-                    except ValueError:
-                        occ_date = current.replace(day=self._days_in_month(current))
-                    if expense.start_date <= occ_date <= effective_end:
-                        dates.append(occ_date)
-                current += relativedelta(months=1)
-
-        elif expense.recurrence_type == 'annual':
-            current_year = effective_start.year
-            while current_year <= effective_end.year:
-                month = expense.recurrence_month or 1
-                try:
-                    occ_date = date(
-                        current_year, month,
-                        min(expense.recurrence_day, self._days_in_month(date(current_year, month, 1)))
-                    )
-                except ValueError:
-                    current_year += 1
-                    continue
-                if expense.start_date <= occ_date <= effective_end:
-                    dates.append(occ_date)
-                current_year += 1
-
-        elif expense.recurrence_type == 'biennial':
-            # Every two years
-            current_year = effective_start.year
-            # Align to the correct biennial cycle from start_date
-            start_year = expense.start_date.year
-            if (current_year - start_year) % 2 != 0:
-                current_year += 1
-            while current_year <= effective_end.year:
-                month = expense.recurrence_month or 1
-                try:
-                    occ_date = date(
-                        current_year, month,
-                        min(expense.recurrence_day, self._days_in_month(date(current_year, month, 1)))
-                    )
-                except ValueError:
-                    current_year += 2
-                    continue
-                if expense.start_date <= occ_date <= effective_end:
-                    dates.append(occ_date)
-                current_year += 2
+        # Walk forward from start_date in fixed steps until we pass effective_end
+        current = expense.start_date
+        while current <= effective_end:
+            if current >= effective_start:
+                dates.append(current)
+            current = self._advance(current, expense, step)
 
         return dates
+
+    def _get_step(self, recurrence_type):
+        """Return the relativedelta step for a recurrence type."""
+        return {
+            'weekly': relativedelta(weeks=1),
+            'monthly': relativedelta(months=1),
+            'quarterly': relativedelta(months=3),
+            'biannual': relativedelta(months=6),
+            'annual': relativedelta(years=1),
+            'biennial': relativedelta(years=2),
+        }[recurrence_type]
+
+    def _advance(self, current, expense, step):
+        """Advance the date by one step, clamping day to the start_date's day."""
+        next_date = current + step
+        # For month/year-based recurrences, pin to the original day of month
+        # (e.g. start_date Jan 31 + 1 month -> Feb 28, then Mar 31)
+        if expense.recurrence_type != 'weekly':
+            target_day = expense.start_date.day
+            max_day = self._days_in_month(next_date)
+            next_date = next_date.replace(day=min(target_day, max_day))
+        return next_date
 
     def _days_in_month(self, d):
         if d.month == 12:
             return 31
         next_month = d.replace(month=d.month + 1, day=1)
         return (next_month - timedelta(days=1)).day
-
-    def _get_quarter_months(self, start_month):
-        return [
-            start_month,
-            ((start_month - 1 + 3) % 12) + 1,
-            ((start_month - 1 + 6) % 12) + 1,
-            ((start_month - 1 + 9) % 12) + 1,
-        ]

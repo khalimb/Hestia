@@ -60,8 +60,6 @@ class Expense(models.Model):
         null=True, blank=True,
     )
     recurrence_type = models.CharField(max_length=20, choices=RECURRENCE_CHOICES)
-    recurrence_day = models.IntegerField()
-    recurrence_month = models.IntegerField(null=True, blank=True)
     start_date = models.DateField()
     end_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)

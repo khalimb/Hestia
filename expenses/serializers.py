@@ -46,7 +46,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
             'id', 'name', 'description', 'subject', 'subject_name',
             'amount', 'currency',
             'expense_type', 'expense_type_name',
-            'recurrence_type', 'recurrence_day', 'recurrence_month',
+            'recurrence_type',
             'start_date', 'end_date', 'is_active', 'created_by',
             'created_at', 'updated_at', 'next_occurrence',
         ]

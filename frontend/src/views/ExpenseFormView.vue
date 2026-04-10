@@ -22,8 +22,6 @@ const form = ref({
   currency: 'GBP',
   expense_type: '',
   recurrence_type: 'monthly',
-  recurrence_day: 1,
-  recurrence_month: null,
   start_date: new Date().toISOString().split('T')[0],
   end_date: '',
 })
@@ -41,8 +39,6 @@ onMounted(async () => {
         currency: data.currency,
         expense_type: data.expense_type || '',
         recurrence_type: data.recurrence_type,
-        recurrence_day: data.recurrence_day,
-        recurrence_month: data.recurrence_month,
         start_date: data.start_date,
         end_date: data.end_date || '',
       }
@@ -52,14 +48,6 @@ onMounted(async () => {
   }
 })
 
-const showMonthField = computed(() =>
-  ['quarterly', 'biannual', 'annual', 'biennial'].includes(form.value.recurrence_type)
-)
-
-const dayLabel = computed(() =>
-  form.value.recurrence_type === 'weekly' ? 'Day of Week (0=Mon, 6=Sun)' : 'Day of Month'
-)
-
 async function handleSubmit() {
   error.value = ''
   loading.value = true
@@ -67,10 +55,7 @@ async function handleSubmit() {
   if (!payload.end_date) payload.end_date = null
   if (!payload.subject) payload.subject = null
   if (!payload.expense_type) payload.expense_type = null
-  if (!payload.recurrence_month) payload.recurrence_month = null
   payload.amount = parseFloat(payload.amount)
-  payload.recurrence_day = parseInt(payload.recurrence_day)
-  if (payload.recurrence_month) payload.recurrence_month = parseInt(payload.recurrence_month)
 
   try {
     if (isEdit.value) {
@@ -144,27 +129,16 @@ async function handleSubmit() {
             </div>
           </div>
 
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Recurrence</label>
-              <select v-model="form.recurrence_type" class="form-select">
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-                <option value="quarterly">Quarterly</option>
-                <option value="biannual">Biannual</option>
-                <option value="annual">Annual</option>
-                <option value="biennial">Biennial</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label">{{ dayLabel }}</label>
-              <input v-model="form.recurrence_day" type="number" :min="form.recurrence_type === 'weekly' ? 0 : 1" :max="form.recurrence_type === 'weekly' ? 6 : 31" class="form-input" required />
-            </div>
-          </div>
-
-          <div v-if="showMonthField" class="form-group">
-            <label class="form-label">Month (1-12)</label>
-            <input v-model="form.recurrence_month" type="number" min="1" max="12" class="form-input" />
+          <div class="form-group">
+            <label class="form-label">Recurrence</label>
+            <select v-model="form.recurrence_type" class="form-select">
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="biannual">Biannual</option>
+              <option value="annual">Annual</option>
+              <option value="biennial">Biennial</option>
+            </select>
           </div>
 
           <div class="form-row">
