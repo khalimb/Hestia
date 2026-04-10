@@ -94,11 +94,17 @@ export const useExpenseStore = defineStore('expenses', () => {
     expenseTypes.value = expenseTypes.value.filter((t) => t.id !== id)
   }
 
+  async function generateOccurrences() {
+    const { data } = await api.post('expenses/generate_occurrences/')
+    return data
+  }
+
   return {
     expenses, subjects, expenseTypes, loading, error,
     fetchExpenses, fetchSubjects, fetchExpenseTypes,
     createExpense, updateExpense, deleteExpense,
     createSubject, updateSubject, deleteSubject,
     createExpenseType, updateExpenseType, deleteExpenseType,
+    generateOccurrences,
   }
 })

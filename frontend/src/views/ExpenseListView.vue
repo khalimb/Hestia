@@ -27,6 +27,23 @@ function applyFilters() {
   store.fetchExpenses(params)
 }
 
+const generating = ref(false)
+const generateMessage = ref('')
+
+async function handleGenerate() {
+  generating.value = true
+  generateMessage.value = ''
+  try {
+    const data = await store.generateOccurrences()
+    generateMessage.value = data.detail
+    await store.fetchExpenses()
+  } catch {
+    generateMessage.value = 'Failed to generate occurrences.'
+  } finally {
+    generating.value = false
+  }
+}
+
 async function handleDelete(expense) {
   if (confirm(`Deactivate "${expense.name}"?`)) {
     await store.deleteExpense(expense.id)
@@ -38,8 +55,14 @@ async function handleDelete(expense) {
   <div>
     <div class="page-header">
       <h1>Expenses</h1>
-      <RouterLink to="/expenses/new" class="btn btn-primary">+ New Expense</RouterLink>
+      <div class="flex gap-2">
+        <button class="btn btn-outline" :disabled="generating" @click="handleGenerate">
+          {{ generating ? 'Generating...' : 'Generate Occurrences' }}
+        </button>
+        <RouterLink to="/expenses/new" class="btn btn-primary">+ New Expense</RouterLink>
+      </div>
     </div>
+    <div v-if="generateMessage" class="alert" style="margin-bottom: 1rem;">{{ generateMessage }}</div>
 
     <!-- Filters -->
     <div class="card mb-4">

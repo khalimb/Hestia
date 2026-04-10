@@ -8,7 +8,7 @@ from .serializers import (
     SubjectSerializer, ExpenseTypeSerializer, ExpenseSerializer,
     ExpenseDetailSerializer, OccurrenceSerializer,
 )
-from .services import ensure_occurrences_generated
+from .services import ensure_occurrences_generated, force_generate_occurrences
 
 
 class SubjectViewSet(viewsets.ModelViewSet):
@@ -69,6 +69,13 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         if self.action == 'retrieve':
             return ExpenseDetailSerializer
         return ExpenseSerializer
+
+    @action(detail=False, methods=['post'])
+    def generate_occurrences(self, request):
+        """Manually trigger occurrence generation, bypassing the cooldown."""
+        force_generate_occurrences()
+        count = Occurrence.objects.count()
+        return Response({'detail': f'Occurrences generated. Total: {count}.'})
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)

@@ -25,3 +25,11 @@ def ensure_occurrences_generated():
 
     # Run outside the lock so we don't block other requests
     call_command('generate_occurrences')
+
+
+def force_generate_occurrences():
+    """Run generate_occurrences unconditionally, bypassing the cooldown."""
+    global _last_run
+    call_command('generate_occurrences')
+    with _lock:
+        _last_run = time.monotonic()
