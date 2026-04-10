@@ -9,5 +9,8 @@ python manage.py seed_expense_types || true
 python manage.py seed_categories   || true
 python manage.py seed_subjects     || true
 
+echo "==> Generating occurrences..."
+python manage.py generate_occurrences || true
+
 echo "==> Starting gunicorn..."
 exec gunicorn hestia_project.wsgi --bind 0.0.0.0:8080 --worker-tmp-dir /dev/shm --workers 2
