@@ -3,7 +3,7 @@ from django.db.models import Sum, Count
 from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from expenses.models import Expense, Occurrence
+from expenses.models import Subject, ExpenseType, Expense, Occurrence
 from expenses.services import ensure_occurrences_generated
 
 
@@ -94,3 +94,53 @@ class DashboardOverdueView(APIView):
                 'days_overdue': (today - occ.due_date).days,
             })
         return Response(data)
+
+
+class DashboardCoverageView(APIView):
+    """Coverage matrix of subjects × expense types.
+
+    Reports, for every (subject, expense_type) pair, how many active expenses
+    link them. A zero/absent cell is a gap — a combination for which no
+    expense has been added yet — so admins can spot what's still missing.
+    """
+
+    def get(self, request):
+        subjects = list(Subject.objects.order_by('name').values('id', 'name'))
+        expense_types = list(
+            ExpenseType.objects.order_by('name').values('id', 'name')
+        )
+
+        active_expenses = Expense.objects.filter(is_active=True)
+
+        # One grouped query: count of active expenses per (subject, type) pair.
+        pair_counts = active_expenses.values(
+            'subject_id', 'expense_type_id',
+        ).annotate(count=Count('id'))
+
+        # matrix[subject_id][expense_type_id] = count (string keys for JSON).
+        matrix = {}
+        no_subject = 0
+        no_type = 0
+        for row in pair_counts:
+            sid, tid, count = row['subject_id'], row['expense_type_id'], row['count']
+            # Expenses missing a subject or type can't be placed in a cell;
+            # surface them separately rather than dropping them silently.
+            if sid is None:
+                no_subject += count
+            if tid is None:
+                no_type += count
+            if sid is None or tid is None:
+                continue
+            matrix.setdefault(str(sid), {})[str(tid)] = count
+
+        return Response({
+            'subjects': [
+                {'id': str(s['id']), 'name': s['name']} for s in subjects
+            ],
+            'expense_types': [
+                {'id': str(t['id']), 'name': t['name']} for t in expense_types
+            ],
+            'matrix': matrix,
+            'unassigned': {'no_subject': no_subject, 'no_type': no_type},
+            'total_active_expenses': active_expenses.count(),
+        })

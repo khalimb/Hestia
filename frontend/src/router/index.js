@@ -29,6 +29,11 @@ const routes = [
     component: () => import('../views/ExpenseFormView.vue'),
   },
   {
+    path: '/coverage',
+    name: 'Coverage',
+    component: () => import('../views/CoverageGridView.vue'),
+  },
+  {
     path: '/expenses/:id',
     name: 'ExpenseDetail',
     component: () => import('../views/ExpenseDetailView.vue'),
