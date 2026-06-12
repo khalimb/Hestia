@@ -28,6 +28,17 @@ const editingTypeId = ref(null)
 const typeForm = ref({ name: '' })
 const typeError = ref('')
 
+// Agent Import
+const importConfig = ref(null)
+const templateDraft = ref('')
+const importError = ref('')
+const importSuccess = ref('')
+const tokenBusy = ref(false)
+const savingTemplate = ref(false)
+const copyState = ref('') // '' | 'copying' | 'copied' | 'manual'
+const showPrompt = ref(false)
+const promptText = ref('')
+
 onMounted(() => {
   if (auth.user) {
     form.value.first_name = auth.user.first_name || ''
@@ -36,6 +47,7 @@ onMounted(() => {
   }
   store.fetchSubjects()
   store.fetchExpenseTypes()
+  fetchImportConfig()
 })
 
 async function handleSave() {
@@ -141,6 +153,108 @@ async function handleDeleteType(type) {
     await store.deleteExpenseType(type.id)
   } catch (e) {
     alert(e.response?.data?.detail || 'Cannot delete this expense type.')
+  }
+}
+
+// Agent Import
+function varTag(name) {
+  // Render a literal {{placeholder}} without tripping Vue's template parser.
+  return `{{${name}}}`
+}
+
+async function fetchImportConfig(syncDraft = true) {
+  try {
+    const { data } = await api.get('agent-import/config/')
+    importConfig.value = data
+    if (syncDraft) templateDraft.value = data.prompt_template
+  } catch {
+    importError.value = 'Failed to load agent import settings.'
+  }
+}
+
+async function generateToken() {
+  importError.value = ''
+  importSuccess.value = ''
+  tokenBusy.value = true
+  try {
+    await api.post('agent-import/token/')
+    await fetchImportConfig(false)
+    importSuccess.value = 'Import token generated. Copy the prompt below to use it.'
+  } catch {
+    importError.value = 'Failed to generate token.'
+  } finally {
+    tokenBusy.value = false
+  }
+}
+
+async function revokeToken() {
+  if (!confirm('Revoke the current import token? Any prompt already shared will stop working.')) return
+  importError.value = ''
+  importSuccess.value = ''
+  tokenBusy.value = true
+  try {
+    await api.delete('agent-import/token/')
+    showPrompt.value = false
+    await fetchImportConfig(false)
+    importSuccess.value = 'Import token revoked.'
+  } catch {
+    importError.value = 'Failed to revoke token.'
+  } finally {
+    tokenBusy.value = false
+  }
+}
+
+async function saveTemplate() {
+  importError.value = ''
+  importSuccess.value = ''
+  savingTemplate.value = true
+  try {
+    await api.patch('agent-import/config/', { prompt_template: templateDraft.value })
+    await fetchImportConfig(true)
+    importSuccess.value = 'Prompt template saved.'
+  } catch {
+    importError.value = 'Failed to save template.'
+  } finally {
+    savingTemplate.value = false
+  }
+}
+
+async function resetTemplate() {
+  if (!confirm('Reset the prompt template to the system default?')) return
+  importError.value = ''
+  importSuccess.value = ''
+  savingTemplate.value = true
+  try {
+    await api.patch('agent-import/config/', { prompt_template: '' })
+    await fetchImportConfig(true)
+    importSuccess.value = 'Prompt template reset to default.'
+  } catch {
+    importError.value = 'Failed to reset template.'
+  } finally {
+    savingTemplate.value = false
+  }
+}
+
+async function copyPrompt() {
+  importError.value = ''
+  copyState.value = 'copying'
+  try {
+    const { data } = await api.get('agent-import/prompt/')
+    promptText.value = data.prompt
+    showPrompt.value = true
+    try {
+      await navigator.clipboard.writeText(data.prompt)
+      copyState.value = 'copied'
+      setTimeout(() => {
+        if (copyState.value === 'copied') copyState.value = ''
+      }, 2500)
+    } catch {
+      // Clipboard blocked (e.g. non-secure context) — preview shown for manual copy.
+      copyState.value = 'manual'
+    }
+  } catch (e) {
+    copyState.value = ''
+    importError.value = e.response?.data?.detail || 'Failed to build the prompt.'
   }
 }
 </script>
@@ -252,6 +366,107 @@ async function handleDeleteType(type) {
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- Agent Import -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <h3>Agent Import</h3>
+      </div>
+      <div class="card-body">
+        <p class="text-sm text-muted mb-4">
+          Generate a prompt to paste into an AI agent (e.g. Claude Cowork). It asks you to upload a bill,
+          reads it, picks the matching subject and expense type, lets you confirm, then submits the expense
+          to Hestia — so you don't have to enter it by hand.
+        </p>
+
+        <div v-if="importSuccess" class="alert alert-success">{{ importSuccess }}</div>
+        <div v-if="importError" class="alert alert-danger">{{ importError }}</div>
+
+        <!-- Submission token -->
+        <div class="form-group">
+          <label class="form-label">Submission token</label>
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+            <code
+              v-if="importConfig?.has_token"
+              style="background:var(--color-gray-100,#f3f4f6); padding:0.25rem 0.5rem; border-radius:0.375rem; font-size:0.8125rem"
+            >{{ importConfig.token_masked }}</code>
+            <span v-else class="text-sm text-muted">No token yet — generate one to enable import.</span>
+            <button class="btn btn-sm btn-primary" :disabled="tokenBusy" @click="generateToken">
+              {{ importConfig?.has_token ? 'Regenerate' : 'Generate token' }}
+            </button>
+            <button
+              v-if="importConfig?.has_token"
+              class="btn btn-sm btn-outline"
+              :disabled="tokenBusy"
+              style="color:var(--color-danger)"
+              @click="revokeToken"
+            >
+              Revoke
+            </button>
+          </div>
+          <p class="text-xs text-muted mt-1">
+            Scoped to creating expenses only — it can't read your data or change your account. The prompt
+            embeds this token, so treat it as a secret and revoke it if it leaks.
+          </p>
+        </div>
+
+        <!-- Prompt template -->
+        <div class="form-group">
+          <label class="form-label">Prompt template</label>
+          <textarea
+            v-model="templateDraft"
+            class="form-input"
+            rows="10"
+            spellcheck="false"
+            style="font-family:'SF Mono',Monaco,monospace; font-size:0.8125rem"
+          ></textarea>
+          <p class="text-xs text-muted mt-1">
+            Variables filled in automatically:
+            <code
+              v-for="v in importConfig?.template_variables || []"
+              :key="v"
+              style="background:var(--color-gray-100,#f3f4f6); padding:0.0625rem 0.375rem; border-radius:0.25rem; margin-right:0.25rem; font-size:0.75rem"
+            >{{ varTag(v) }}</code>
+          </p>
+          <div class="flex gap-2" style="margin-top:0.5rem">
+            <button class="btn btn-sm btn-primary" :disabled="savingTemplate" @click="saveTemplate">
+              {{ savingTemplate ? 'Saving...' : 'Save template' }}
+            </button>
+            <button class="btn btn-sm btn-outline" :disabled="savingTemplate" @click="resetTemplate">
+              Reset to default
+            </button>
+          </div>
+        </div>
+
+        <!-- Copy prompt -->
+        <div class="form-group" style="margin-bottom:0">
+          <button
+            class="btn btn-primary"
+            :disabled="!importConfig?.has_token || copyState === 'copying'"
+            @click="copyPrompt"
+          >
+            {{ copyState === 'copied' ? '✓ Copied to clipboard' : copyState === 'copying' ? 'Building…' : 'Copy import prompt' }}
+          </button>
+          <span v-if="!importConfig?.has_token" class="text-xs text-muted" style="margin-left:0.5rem">
+            Generate a token first.
+          </span>
+
+          <div v-if="showPrompt" style="margin-top:0.5rem">
+            <p v-if="copyState === 'manual'" class="text-xs text-muted" style="margin-bottom:0.25rem">
+              Couldn't reach the clipboard automatically — select and copy the text below.
+            </p>
+            <textarea
+              :value="promptText"
+              readonly
+              class="form-input"
+              rows="10"
+              style="font-family:'SF Mono',Monaco,monospace; font-size:0.8125rem"
+              @focus="$event.target.select()"
+            ></textarea>
+          </div>
+        </div>
       </div>
     </div>
 

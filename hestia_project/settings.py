@@ -131,6 +131,10 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PAGINATION_CLASS': 'core.pagination.StandardPagination',
     'PAGE_SIZE': 20,
+    # Rate limit for the agent-import endpoints (scoped import-token auth).
+    'DEFAULT_THROTTLE_RATES': {
+        'agent_import': os.environ.get('AGENT_IMPORT_THROTTLE_RATE', '120/hour'),
+    },
 }
 
 # JWT Settings
