@@ -4,6 +4,8 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.views.generic import TemplateView
 
+from agents import mcp as mcp_views
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v1/auth/', include('accounts.urls')),
@@ -12,6 +14,11 @@ urlpatterns = [
     path('api/v1/', include('payments.urls')),
     path('api/v1/', include('bills.urls')),
     path('api/v1/dashboard/', include('dashboard.urls')),
+    path('api/v1/agents/', include('agents.urls')),
+    # MCP endpoint for agent clients: the token in the URL is the auth.
+    # Both slash variants: a 301 would drop the POST body and break the handshake.
+    path('mcp/<str:token>/', mcp_views.endpoint, name='mcp-endpoint'),
+    path('mcp/<str:token>', mcp_views.endpoint),
 ]
 
 if settings.DEBUG:
@@ -21,5 +28,5 @@ else:
 
 # SPA catch-all: any route not matching api/ or admin/ serves the Vue app
 urlpatterns += [
-    re_path(r'^(?!api/|admin/|static/|media/).*$', TemplateView.as_view(template_name='index.html')),
+    re_path(r'^(?!api/|admin/|static/|media/|mcp/).*$', TemplateView.as_view(template_name='index.html')),
 ]

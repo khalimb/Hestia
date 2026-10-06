@@ -2,10 +2,12 @@
 import { ref, onMounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useExpenseStore } from '../stores/expenses'
+import { useAgentStore } from '../stores/agents'
 import api from '../api/axios'
 
 const auth = useAuthStore()
 const store = useExpenseStore()
+const agents = useAgentStore()
 
 const form = ref({
   first_name: '',
@@ -40,6 +42,16 @@ const editingAccountId = ref(null)
 const accountForm = ref({ name: '', notes: '' })
 const accountError = ref('')
 
+// Agent Access (MCP) + Assignment prompt
+const newTokenName = ref('')
+const tokenBusyMcp = ref(false)
+const tokenResult = ref(null) // { token, connector_url, name } shown once after minting
+const agentError = ref('')
+const agentSuccess = ref('')
+const urlCopyState = ref('')
+const assignmentTemplateDraft = ref('')
+const savingAssignmentTemplate = ref(false)
+
 // Agent Import
 const importConfig = ref(null)
 const templateDraft = ref('')
@@ -62,6 +74,10 @@ onMounted(() => {
   store.fetchPaymentMethods()
   store.fetchPaymentAccounts()
   fetchImportConfig()
+  agents.fetchTokens().catch(() => { agentError.value = 'Failed to load MCP tokens.' })
+  agents.fetchConfig()
+    .then((cfg) => { assignmentTemplateDraft.value = cfg.assignment_template })
+    .catch(() => { agentError.value = 'Failed to load assignment prompt settings.' })
 })
 
 async function handleSave() {
@@ -253,6 +269,81 @@ async function handleDeleteAccount(account) {
     await store.deletePaymentAccount(account.id)
   } catch (e) {
     alert(e.response?.data?.detail || 'Cannot delete this account.')
+  }
+}
+
+// Agent Access (MCP)
+async function createMcpToken() {
+  const name = newTokenName.value.trim()
+  if (!name) { agentError.value = 'Give the token a name (e.g. "claude.ai" or "Claude Code").'; return }
+  agentError.value = ''
+  agentSuccess.value = ''
+  tokenBusyMcp.value = true
+  try {
+    tokenResult.value = await agents.createToken(name)
+    newTokenName.value = ''
+    urlCopyState.value = ''
+  } catch (e) {
+    agentError.value = e.response?.data?.name?.[0] || 'Failed to create token.'
+  } finally {
+    tokenBusyMcp.value = false
+  }
+}
+
+async function revokeMcpToken(token) {
+  if (!confirm(`Revoke "${token.name}"? Any client using it loses access immediately.`)) return
+  agentError.value = ''
+  try {
+    await agents.revokeToken(token.id)
+    if (tokenResult.value?.id === token.id) tokenResult.value = null
+    agentSuccess.value = `Token "${token.name}" revoked.`
+  } catch {
+    agentError.value = 'Failed to revoke token.'
+  }
+}
+
+async function copyConnectorUrl() {
+  try {
+    await navigator.clipboard.writeText(tokenResult.value.connector_url)
+    urlCopyState.value = 'copied'
+    setTimeout(() => { if (urlCopyState.value === 'copied') urlCopyState.value = '' }, 2500)
+  } catch {
+    urlCopyState.value = 'manual'
+  }
+}
+
+function claudeCodeCommand() {
+  return tokenResult.value ? `claude mcp add --transport http hestia ${tokenResult.value.connector_url}` : ''
+}
+
+async function saveAssignmentTemplate() {
+  agentError.value = ''
+  agentSuccess.value = ''
+  savingAssignmentTemplate.value = true
+  try {
+    const cfg = await agents.saveTemplate(assignmentTemplateDraft.value)
+    assignmentTemplateDraft.value = cfg.assignment_template
+    agentSuccess.value = 'Assignment prompt template saved.'
+  } catch {
+    agentError.value = 'Failed to save assignment template.'
+  } finally {
+    savingAssignmentTemplate.value = false
+  }
+}
+
+async function resetAssignmentTemplate() {
+  if (!confirm('Reset the assignment prompt template to the system default?')) return
+  agentError.value = ''
+  agentSuccess.value = ''
+  savingAssignmentTemplate.value = true
+  try {
+    const cfg = await agents.saveTemplate('')
+    assignmentTemplateDraft.value = cfg.assignment_template
+    agentSuccess.value = 'Assignment prompt template reset to default.'
+  } catch {
+    agentError.value = 'Failed to reset assignment template.'
+  } finally {
+    savingAssignmentTemplate.value = false
   }
 }
 
@@ -633,6 +724,123 @@ async function copyPrompt() {
               style="font-family:'SF Mono',Monaco,monospace; font-size:0.8125rem"
               @focus="$event.target.select()"
             ></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Agent Access (MCP) -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <h3>Agent Access (MCP)</h3>
+      </div>
+      <div class="card-body">
+        <p class="text-sm text-muted mb-4">
+          Let an AI agent read and change Hestia directly: list and edit expenses, maintain the
+          dictionaries, and save assignment deliverables. Each token is a connector URL for one client.
+          Anything the agent creates is attributed to you.
+        </p>
+
+        <div v-if="agentSuccess" class="alert alert-success">{{ agentSuccess }}</div>
+        <div v-if="agentError" class="alert alert-danger">{{ agentError }}</div>
+
+        <!-- One-time reveal -->
+        <div v-if="tokenResult" class="alert alert-success" style="display:block">
+          <p class="text-sm" style="font-weight:600; margin-bottom:0.5rem">
+            Token "{{ tokenResult.name }}" created. Copy the connector URL now — it is not shown again.
+          </p>
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap; margin-bottom:0.5rem">
+            <code style="background:var(--color-gray-100,#f3f4f6); padding:0.25rem 0.5rem; border-radius:0.375rem; font-size:0.75rem; word-break:break-all">{{ tokenResult.connector_url }}</code>
+            <button class="btn btn-sm btn-primary" @click="copyConnectorUrl">
+              {{ urlCopyState === 'copied' ? '✓ Copied' : 'Copy URL' }}
+            </button>
+          </div>
+          <p v-if="urlCopyState === 'manual'" class="text-xs text-muted">Clipboard blocked — select and copy the URL above.</p>
+          <p class="text-xs" style="margin-top:0.5rem"><strong>claude.ai:</strong> Settings → Connectors → Add custom connector → paste the URL (no OAuth needed).</p>
+          <p class="text-xs"><strong>Claude Code:</strong></p>
+          <code style="display:block; background:var(--color-gray-100,#f3f4f6); padding:0.25rem 0.5rem; border-radius:0.375rem; font-size:0.75rem; word-break:break-all">{{ claudeCodeCommand() }}</code>
+          <button class="btn btn-sm btn-outline" style="margin-top:0.5rem" @click="tokenResult = null">Dismiss</button>
+        </div>
+
+        <!-- Existing tokens -->
+        <div class="form-group">
+          <label class="form-label">Tokens</label>
+          <p v-if="!agents.tokens.length" class="text-sm text-muted">No tokens yet.</p>
+          <table v-else>
+            <thead>
+              <tr>
+                <th>Client</th>
+                <th>Token</th>
+                <th>Created</th>
+                <th>Last used</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="t in agents.tokens" :key="t.id">
+                <td style="font-weight:500">{{ t.name }}</td>
+                <td><code style="font-size:0.75rem">{{ t.token_masked }}</code></td>
+                <td class="text-sm text-muted">{{ t.created_at.slice(0, 10) }}</td>
+                <td class="text-sm text-muted">{{ t.last_used_at ? t.last_used_at.slice(0, 16).replace('T', ' ') : 'never' }}</td>
+                <td class="text-right">
+                  <button class="btn btn-sm btn-outline" style="color:var(--color-danger)" @click="revokeMcpToken(t)">Revoke</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- New token -->
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">New token</label>
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+            <input v-model="newTokenName" type="text" class="form-input" style="max-width:280px" placeholder='Client name, e.g. "claude.ai"' @keyup.enter="createMcpToken" />
+            <button class="btn btn-sm btn-primary" :disabled="tokenBusyMcp" @click="createMcpToken">
+              {{ tokenBusyMcp ? 'Creating…' : 'Create token' }}
+            </button>
+          </div>
+          <p class="text-xs text-muted mt-1">
+            One token per client makes revoking painless. Treat the URL as a secret: anyone holding it can read and change your expenses.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Assignment prompt -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <h3>Assignment Prompt</h3>
+        <RouterLink to="/assignments" class="btn btn-sm btn-outline">Open Assignments</RouterLink>
+      </div>
+      <div class="card-body">
+        <p class="text-sm text-muted mb-4">
+          The prompt copied when you start a new assignment. It frames the agent as a practitioner producing
+          a specific deliverable, points it at the MCP tools above for context and changes, and tells it how
+          to save the result back here.
+        </p>
+        <div class="form-group" style="margin-bottom:0">
+          <textarea
+            v-model="assignmentTemplateDraft"
+            class="form-input"
+            rows="12"
+            spellcheck="false"
+            style="font-family:'SF Mono',Monaco,monospace; font-size:0.8125rem"
+          ></textarea>
+          <p class="text-xs text-muted mt-1">
+            Variables filled in automatically:
+            <code
+              v-for="v in agents.config?.template_variables || []"
+              :key="v"
+              style="background:var(--color-gray-100,#f3f4f6); padding:0.0625rem 0.375rem; border-radius:0.25rem; margin-right:0.25rem; font-size:0.75rem"
+            >{{ varTag(v) }}</code>
+          </p>
+          <div class="flex gap-2" style="margin-top:0.5rem">
+            <button class="btn btn-sm btn-primary" :disabled="savingAssignmentTemplate" @click="saveAssignmentTemplate">
+              {{ savingAssignmentTemplate ? 'Saving...' : 'Save template' }}
+            </button>
+            <button class="btn btn-sm btn-outline" :disabled="savingAssignmentTemplate" @click="resetAssignmentTemplate">
+              Reset to default
+            </button>
           </div>
         </div>
       </div>

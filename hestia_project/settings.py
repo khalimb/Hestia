@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     'payments',
     'bills',
     'dashboard',
+    'agents',
 ]
 
 MIDDLEWARE = [

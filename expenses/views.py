@@ -14,87 +14,47 @@ from .serializers import (
 from .services import ensure_occurrences_generated, force_generate_occurrences
 
 
-class SubjectViewSet(viewsets.ModelViewSet):
+class GuardedDeleteMixin:
+    """Refuse to delete dictionary entries that are default or still in use.
+    The rule itself lives on the model (`deletion_blocker`)."""
+
+    def destroy(self, request, *args, **kwargs):
+        blocker = self.get_object().deletion_blocker()
+        if blocker:
+            return Response({'detail': blocker}, status=status.HTTP_400_BAD_REQUEST)
+        return super().destroy(request, *args, **kwargs)
+
+
+class SubjectViewSet(GuardedDeleteMixin, viewsets.ModelViewSet):
     queryset = Subject.objects.all()
     serializer_class = SubjectSerializer
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
-    def destroy(self, request, *args, **kwargs):
-        subject = self.get_object()
-        if subject.is_default:
-            return Response(
-                {'detail': 'Default subjects cannot be deleted.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if subject.expenses.exists():
-            return Response(
-                {'detail': 'Cannot delete subject with existing expenses.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return super().destroy(request, *args, **kwargs)
 
-
-class ExpenseTypeViewSet(viewsets.ModelViewSet):
+class ExpenseTypeViewSet(GuardedDeleteMixin, viewsets.ModelViewSet):
     queryset = ExpenseType.objects.all()
     serializer_class = ExpenseTypeSerializer
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
-    def destroy(self, request, *args, **kwargs):
-        expense_type = self.get_object()
-        if expense_type.is_default:
-            return Response(
-                {'detail': 'Default expense types cannot be deleted.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if expense_type.expenses.exists():
-            return Response(
-                {'detail': 'Cannot delete expense type with existing expenses.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return super().destroy(request, *args, **kwargs)
 
-
-class PaymentMethodViewSet(viewsets.ModelViewSet):
+class PaymentMethodViewSet(GuardedDeleteMixin, viewsets.ModelViewSet):
     queryset = PaymentMethod.objects.all()
     serializer_class = PaymentMethodSerializer
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
-    def destroy(self, request, *args, **kwargs):
-        method = self.get_object()
-        if method.is_default:
-            return Response(
-                {'detail': 'Default payment methods cannot be deleted.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if method.expenses.exists():
-            return Response(
-                {'detail': 'Cannot delete a payment method that is in use by expenses.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return super().destroy(request, *args, **kwargs)
 
-
-class PaymentAccountViewSet(viewsets.ModelViewSet):
+class PaymentAccountViewSet(GuardedDeleteMixin, viewsets.ModelViewSet):
     queryset = PaymentAccount.objects.all()
     serializer_class = PaymentAccountSerializer
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
-
-    def destroy(self, request, *args, **kwargs):
-        account = self.get_object()
-        if account.expenses.exists():
-            return Response(
-                {'detail': 'Cannot delete an account that is in use by expenses.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return super().destroy(request, *args, **kwargs)
 
 
 class ExpenseViewSet(viewsets.ModelViewSet):

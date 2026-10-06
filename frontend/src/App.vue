@@ -46,6 +46,7 @@ async function handleLogout() {
         <RouterLink to="/" class="nav-link">Dashboard</RouterLink>
         <RouterLink to="/expenses" class="nav-link">Expenses</RouterLink>
         <RouterLink to="/coverage" class="nav-link">Coverage</RouterLink>
+        <RouterLink to="/assignments" class="nav-link">Assignments</RouterLink>
         <RouterLink to="/settings" class="nav-link">Settings</RouterLink>
       </div>
       <div class="nav-right">
