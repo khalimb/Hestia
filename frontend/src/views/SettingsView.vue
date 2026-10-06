@@ -59,9 +59,6 @@ const importError = ref('')
 const importSuccess = ref('')
 const tokenBusy = ref(false)
 const savingTemplate = ref(false)
-const copyState = ref('') // '' | 'copying' | 'copied' | 'manual'
-const showPrompt = ref(false)
-const promptText = ref('')
 
 onMounted(() => {
   if (auth.user) {
@@ -385,7 +382,6 @@ async function revokeToken() {
   tokenBusy.value = true
   try {
     await api.delete('agent-import/token/')
-    showPrompt.value = false
     await fetchImportConfig(false)
     importSuccess.value = 'Import token revoked.'
   } catch {
@@ -423,29 +419,6 @@ async function resetTemplate() {
     importError.value = 'Failed to reset template.'
   } finally {
     savingTemplate.value = false
-  }
-}
-
-async function copyPrompt() {
-  importError.value = ''
-  copyState.value = 'copying'
-  try {
-    const { data } = await api.get('agent-import/prompt/')
-    promptText.value = data.prompt
-    showPrompt.value = true
-    try {
-      await navigator.clipboard.writeText(data.prompt)
-      copyState.value = 'copied'
-      setTimeout(() => {
-        if (copyState.value === 'copied') copyState.value = ''
-      }, 2500)
-    } catch {
-      // Clipboard blocked (e.g. non-secure context) — preview shown for manual copy.
-      copyState.value = 'manual'
-    }
-  } catch (e) {
-    copyState.value = ''
-    importError.value = e.response?.data?.detail || 'Failed to build the prompt.'
   }
 }
 </script>
@@ -635,9 +608,9 @@ async function copyPrompt() {
       </div>
       <div class="card-body">
         <p class="text-sm text-muted mb-4">
-          Generate a prompt to paste into an AI agent (e.g. Claude Cowork). It asks you to upload a bill,
-          reads it, picks the matching subject and expense type, lets you confirm, then submits the expense
-          to Hestia — so you don't have to enter it by hand.
+          Token and prompt template for the bill-import agent. The prompt asks the agent to upload a bill,
+          reads it, picks the matching subject, type and payment details, lets you confirm, then submits the
+          expense to Hestia. Copy the prompt itself from the Dashboard.
         </p>
 
         <div v-if="importSuccess" class="alert alert-success">{{ importSuccess }}</div>
@@ -699,33 +672,6 @@ async function copyPrompt() {
           </div>
         </div>
 
-        <!-- Copy prompt -->
-        <div class="form-group" style="margin-bottom:0">
-          <button
-            class="btn btn-primary"
-            :disabled="!importConfig?.has_token || copyState === 'copying'"
-            @click="copyPrompt"
-          >
-            {{ copyState === 'copied' ? '✓ Copied to clipboard' : copyState === 'copying' ? 'Building…' : 'Copy import prompt' }}
-          </button>
-          <span v-if="!importConfig?.has_token" class="text-xs text-muted" style="margin-left:0.5rem">
-            Generate a token first.
-          </span>
-
-          <div v-if="showPrompt" style="margin-top:0.5rem">
-            <p v-if="copyState === 'manual'" class="text-xs text-muted" style="margin-bottom:0.25rem">
-              Couldn't reach the clipboard automatically — select and copy the text below.
-            </p>
-            <textarea
-              :value="promptText"
-              readonly
-              class="form-input"
-              rows="10"
-              style="font-family:'SF Mono',Monaco,monospace; font-size:0.8125rem"
-              @focus="$event.target.select()"
-            ></textarea>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -814,9 +760,9 @@ async function copyPrompt() {
       </div>
       <div class="card-body">
         <p class="text-sm text-muted mb-4">
-          The prompt copied when you start a new assignment. It frames the agent as a practitioner producing
-          a specific deliverable, points it at the MCP tools above for context and changes, and tells it how
-          to save the result back here.
+          Template for the prompt copied when you start a new assignment from the Dashboard or the Assignments
+          page. It frames the agent as a practitioner producing a specific deliverable, points it at the MCP
+          tools above for context and changes, and tells it how to save the result back here.
         </p>
         <div class="form-group" style="margin-bottom:0">
           <textarea

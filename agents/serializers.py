@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .assignment_prompt import DEFAULT_ASSIGNMENT_TEMPLATE, TEMPLATE_VARIABLES
-from .models import McpToken, Assignment, AgentConfig
+from .models import McpToken, McpSession, Assignment, AgentConfig
 
 
 class McpTokenSerializer(serializers.ModelSerializer):
@@ -89,3 +89,21 @@ class AgentConfigSerializer(serializers.ModelSerializer):
                 instance.assignment_template = template
             instance.save(update_fields=['assignment_template', 'updated_at'])
         return instance
+
+
+class McpSessionSerializer(serializers.ModelSerializer):
+    """One agent session: which client, whose token, what it called, how many
+    changes it made (activity rows link back by session)."""
+    token_name = serializers.CharField(source='token.name', read_only=True)
+    user = serializers.UUIDField(source='token.user_id', read_only=True)
+    user_name = serializers.CharField(source='token.user.display_name', read_only=True)
+    activity_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = McpSession
+        fields = [
+            'id', 'token', 'token_name', 'user', 'user_name', 'client_name', 'client_version',
+            'protocol_version', 'started_at', 'last_seen_at', 'ended_at', 'request_count',
+            'tool_calls', 'activity_count',
+        ]
+        read_only_fields = fields

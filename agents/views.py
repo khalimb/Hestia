@@ -1,13 +1,16 @@
+from django.db.models import Count
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from activity.services import record_activity
+
 from .assignment_prompt import DEFAULT_ASSIGNMENT_TEMPLATE, build_assignment_prompt
-from .models import McpToken, Assignment, AgentConfig
+from .models import McpToken, McpSession, Assignment, AgentConfig
 from .serializers import (
-    McpTokenSerializer, AssignmentSerializer, AssignmentDetailSerializer,
-    AssignmentWritebackSerializer, AgentConfigSerializer,
+    McpTokenSerializer, McpSessionSerializer, AssignmentSerializer,
+    AssignmentDetailSerializer, AssignmentWritebackSerializer, AgentConfigSerializer,
 )
 
 
@@ -45,6 +48,17 @@ class McpTokenDetailView(generics.DestroyAPIView):
         return McpToken.objects.filter(user=self.request.user)
 
 
+class McpSessionListView(generics.ListAPIView):
+    """All agent sessions in the household, newest first, with per-session tool
+    call counts and how many logged changes each made. Household-wide on
+    purpose: the point is that members can review each other's agents."""
+    serializer_class = McpSessionSerializer
+    pagination_class = None   # a review list; recent-first and small
+    queryset = (McpSession.objects.select_related('token', 'token__user')
+                .annotate(activity_count=Count('activity'))
+                .order_by('-started_at')[:200])
+
+
 # --- Assignments (owner-facing, JWT) ----------------------------------------
 
 class AssignmentListCreateView(generics.ListCreateAPIView):
@@ -58,6 +72,8 @@ class AssignmentListCreateView(generics.ListCreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         assignment = serializer.save(created_by=request.user)
+        record_activity('create', 'assignment', assignment.pk, assignment.title,
+                        {'title': {'from': None, 'to': assignment.title}})
         data = AssignmentSerializer(assignment).data
         data['rendered_prompt'] = _render(assignment, request)
         return Response(data, status=status.HTTP_201_CREATED)
@@ -66,6 +82,12 @@ class AssignmentListCreateView(generics.ListCreateAPIView):
 class AssignmentDetailView(generics.RetrieveDestroyAPIView):
     serializer_class = AssignmentDetailSerializer
     queryset = Assignment.objects.select_related('created_by')
+
+    def perform_destroy(self, instance):
+        record_activity('delete', 'assignment', instance.pk, instance.title,
+                        {'title': {'from': instance.title, 'to': None},
+                         'status': {'from': instance.status, 'to': None}})
+        instance.delete()
 
 
 class AssignmentPromptView(APIView):

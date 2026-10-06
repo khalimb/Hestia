@@ -23,6 +23,8 @@ from expenses.serializers import (
     OccurrenceSerializer,
 )
 from expenses.services import force_generate_occurrences
+from activity.models import ActivityLog
+from activity.services import delete_logged
 from .models import Assignment
 
 
@@ -203,6 +205,35 @@ def assignment_get(args, user):
     }
 
 
+def activity_recent(args, user):
+    """Change log, newest first — what people and agents did."""
+    qs = ActivityLog.objects.select_related('actor', 'token')
+    try:
+        days = int(args.get('days', 7))
+    except (TypeError, ValueError):
+        raise ToolError('days must be an integer')
+    if days > 0:
+        qs = qs.filter(created_at__gte=timezone.now() - timedelta(days=days))
+    if args.get('entity_type'):
+        qs = qs.filter(entity_type=args['entity_type'])
+    if args.get('entity_id'):
+        qs = qs.filter(entity_id=args['entity_id'])
+    if args.get('source'):
+        qs = qs.filter(source=args['source'])
+    limit = _limit(args, default=50, maximum=200)
+    try:
+        rows = list(qs[:limit])
+    except ValidationError as e:
+        raise ToolError(f'bad filter: {e}')
+    return {'count': len(rows), 'activity': [{
+        'at': row.created_at.isoformat(timespec='minutes'),
+        'who': row.actor.display_name if row.actor else None,
+        'via': row.via, 'action': row.action,
+        'entity_type': row.entity_type, 'entity_id': str(row.entity_id),
+        'entity': row.entity_label, 'changes': row.changes,
+    } for row in rows]}
+
+
 # ------------------------------------------------------------------ writes
 
 def _expense_fields(args):
@@ -262,13 +293,13 @@ def dictionary_update(args, user):
 
 def dictionary_delete(args, user):
     kind = args.get('kind')
-    model, _ = _dictionary(kind)
+    model, serializer_cls = _dictionary(kind)
     obj = _get_or_error(model, args.get('id'), kind)
     blocker = obj.deletion_blocker()
     if blocker:
         raise ToolError(blocker)
     name = obj.name
-    obj.delete()
+    delete_logged(serializer_cls, obj)
     return {'deleted': True, 'kind': kind, 'name': name}
 
 
@@ -350,6 +381,17 @@ TOOLS = [
      'inputSchema': {'type': 'object', 'properties': {'assignment_id': _UUID},
                      'required': ['assignment_id']},
      'handler': assignment_get},
+    {'name': 'activity_recent',
+     'description': 'Change log, newest first: who changed what, through which door '
+                    '(web, MCP client, agent import), with before/after values. '
+                    'Defaults to the last 7 days; days=0 for all time. Filter by '
+                    'entity_type, entity_id, source (web | mcp | import).',
+     'inputSchema': {'type': 'object', 'properties': {
+         'days': {'type': 'integer', 'default': 7},
+         'entity_type': {'type': 'string'}, 'entity_id': _UUID,
+         'source': {'type': 'string', 'enum': ['web', 'mcp', 'import', 'system']},
+         'limit': {'type': 'integer', 'default': 50}}},
+     'handler': activity_recent},
     # --- write ---
     {'name': 'expense_create',
      'description': 'WRITE: create a recurring expense. Validates like the API: '

@@ -1,6 +1,7 @@
 from django.db.models import Sum
 from rest_framework import generics, status
 from rest_framework.response import Response
+from activity.services import delete_logged
 from expenses.models import Occurrence
 from .models import Payment
 from .serializers import PaymentSerializer
@@ -42,7 +43,7 @@ class PaymentDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_destroy(self, instance):
         occurrence = instance.occurrence
-        instance.delete()
+        delete_logged(PaymentSerializer, instance)
         self._update_occurrence_status(occurrence)
 
     def _update_occurrence_status(self, occurrence):

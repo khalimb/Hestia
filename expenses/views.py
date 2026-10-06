@@ -3,6 +3,9 @@ from rest_framework import viewsets, generics, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
+
+from activity.services import delete_logged
+
 from .models import (
     Subject, ExpenseType, PaymentMethod, PaymentAccount, Expense, Occurrence,
 )
@@ -23,6 +26,9 @@ class GuardedDeleteMixin:
         if blocker:
             return Response({'detail': blocker}, status=status.HTTP_400_BAD_REQUEST)
         return super().destroy(request, *args, **kwargs)
+
+    def perform_destroy(self, instance):
+        delete_logged(self.get_serializer_class(), instance)
 
 
 class SubjectViewSet(GuardedDeleteMixin, viewsets.ModelViewSet):
@@ -151,8 +157,11 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         serializer.save(created_by=self.request.user)
 
     def perform_destroy(self, instance):
-        instance.is_active = False
-        instance.save()
+        # Soft delete, routed through the serializer so it is logged as an
+        # update (is_active true -> false) like any other change.
+        serializer = ExpenseSerializer(instance, data={'is_active': False}, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
 
 
 class OccurrenceViewSet(viewsets.ReadOnlyModelViewSet):

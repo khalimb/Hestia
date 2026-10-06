@@ -3,11 +3,14 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { format, parseISO } from 'date-fns'
 import api from '../api/axios'
+import { useActivityStore } from '../stores/activity'
 
 const route = useRoute()
 const router = useRouter()
+const activity = useActivityStore()
 const expense = ref(null)
 const bills = ref([])
+const history = ref([])
 const loading = ref(true)
 const error = ref('')
 
@@ -50,11 +53,27 @@ async function fetchData() {
     ])
     expense.value = expRes.data
     bills.value = billRes.data.results || billRes.data
+    activity.fetchEntityHistory('expense', route.params.id)
+      .then((rows) => { history.value = rows })
+      .catch(() => { history.value = [] })
   } catch {
     error.value = 'Failed to load expense.'
   } finally {
     loading.value = false
   }
+}
+
+function fmtChange(v) {
+  if (v === null || v === undefined || v === '') return '—'
+  if (v === true) return 'yes'
+  if (v === false) return 'no'
+  return String(v)
+}
+
+function changeLines(row) {
+  return Object.entries(row.changes || {}).map(([field, c]) =>
+    row.action === 'create' ? `${field}: ${fmtChange(c.to)}` : `${field}: ${fmtChange(c.from)} → ${fmtChange(c.to)}`,
+  )
 }
 
 function formatCurrency(amount, currency) {
@@ -205,6 +224,41 @@ function formatFileSize(bytes) {
                     style="margin-right: 0.25rem"
                   >{{ markingPaid[occ.id] ? 'Saving...' : 'Mark Paid' }}</button>
                   <RouterLink :to="`/occurrences/${occ.id}`" class="btn btn-sm btn-outline">View</RouterLink>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- History -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h3>History</h3>
+          <RouterLink to="/activity" class="btn btn-sm btn-outline">All activity</RouterLink>
+        </div>
+        <div class="card-body" style="padding:0">
+          <div v-if="!history.length" class="empty-state">
+            <p>No recorded changes yet. Changes made from now on are logged here with who made them.</p>
+          </div>
+          <table v-else>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Who</th>
+                <th>Via</th>
+                <th>Action</th>
+                <th>Changes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in history" :key="row.id">
+                <td class="text-sm" style="white-space:nowrap">{{ format(parseISO(row.created_at), 'dd MMM yyyy HH:mm') }}</td>
+                <td class="text-sm">{{ row.actor_name || '—' }}</td>
+                <td class="text-sm">{{ row.via }}</td>
+                <td class="text-sm">{{ row.action }}</td>
+                <td class="text-xs">
+                  <div v-for="line in changeLines(row)" :key="line">{{ line }}</div>
                 </td>
               </tr>
             </tbody>

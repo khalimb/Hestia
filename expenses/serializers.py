@@ -1,33 +1,48 @@
 from django.db.models import Sum
 from django.utils import timezone
 from rest_framework import serializers
+
+from activity.services import ActivityLoggedSerializerMixin
+
 from .models import (
     Subject, ExpenseType, PaymentMethod, PaymentAccount, Expense, Occurrence,
 )
 
 
-class SubjectSerializer(serializers.ModelSerializer):
+class SubjectSerializer(ActivityLoggedSerializerMixin, serializers.ModelSerializer):
+    activity_entity = 'subject'
+    activity_fields = {'name': 'name'}
+
     class Meta:
         model = Subject
         fields = ['id', 'name', 'is_default', 'created_by']
         read_only_fields = ['id', 'is_default', 'created_by']
 
 
-class ExpenseTypeSerializer(serializers.ModelSerializer):
+class ExpenseTypeSerializer(ActivityLoggedSerializerMixin, serializers.ModelSerializer):
+    activity_entity = 'expense_type'
+    activity_fields = {'name': 'name'}
+
     class Meta:
         model = ExpenseType
         fields = ['id', 'name', 'is_default', 'created_by']
         read_only_fields = ['id', 'is_default', 'created_by']
 
 
-class PaymentMethodSerializer(serializers.ModelSerializer):
+class PaymentMethodSerializer(ActivityLoggedSerializerMixin, serializers.ModelSerializer):
+    activity_entity = 'payment_method'
+    activity_fields = {'name': 'name', 'requires_account': 'requires_account'}
+
     class Meta:
         model = PaymentMethod
         fields = ['id', 'name', 'requires_account', 'is_default', 'created_by']
         read_only_fields = ['id', 'is_default', 'created_by']
 
 
-class PaymentAccountSerializer(serializers.ModelSerializer):
+class PaymentAccountSerializer(ActivityLoggedSerializerMixin, serializers.ModelSerializer):
+    activity_entity = 'payment_account'
+    activity_fields = {'name': 'name', 'notes': 'notes'}
+
     class Meta:
         model = PaymentAccount
         fields = ['id', 'name', 'notes', 'created_by']
@@ -56,7 +71,17 @@ class OccurrenceSerializer(serializers.ModelSerializer):
         return str(total) if total else '0.00'
 
 
-class ExpenseSerializer(serializers.ModelSerializer):
+class ExpenseSerializer(ActivityLoggedSerializerMixin, serializers.ModelSerializer):
+    activity_entity = 'expense'
+    # Logged with display names for relations, so a row reads like the UI.
+    activity_fields = {
+        'name': 'name', 'description': 'description', 'amount': 'amount',
+        'currency': 'currency', 'recurrence_type': 'recurrence_type',
+        'subject': 'subject_name', 'expense_type': 'expense_type_name',
+        'payment_method': 'payment_method_name', 'account': 'account_name',
+        'responsible': 'responsible_name', 'start_date': 'start_date',
+        'end_date': 'end_date', 'is_active': 'is_active',
+    }
     subject_name = serializers.CharField(source='subject.name', read_only=True, default=None)
     expense_type_name = serializers.CharField(source='expense_type.name', read_only=True, default=None)
     payment_method_name = serializers.CharField(

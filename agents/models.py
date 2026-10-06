@@ -52,6 +52,33 @@ class McpToken(models.Model):
         return f"{MCP_TOKEN_PREFIX}…{self.token[-4:]}"
 
 
+class McpSession(models.Model):
+    """One MCP client session (Mcp-Session-Id), minted on `initialize` and
+    echoed back by the client on every later request. Groups the activity
+    rows an agent produced so a session can be reviewed afterwards; also
+    counts tool calls so reads (which log no activity rows) are visible."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    token = models.ForeignKey(McpToken, on_delete=models.CASCADE, related_name='sessions')
+    client_name = models.CharField(max_length=100, blank=True, default='')
+    client_version = models.CharField(max_length=50, blank=True, default='')
+    protocol_version = models.CharField(max_length=20, blank=True, default='')
+    started_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(auto_now=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    request_count = models.PositiveIntegerField(default=0)
+    # {tool_name: call_count}, including reads.
+    tool_calls = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['-started_at']
+
+    def __str__(self):
+        return f"McpSession {self.client_name or '?'} via {self.token.name}"
+
+    def note_tool_call(self, name):
+        self.tool_calls[name] = self.tool_calls.get(name, 0) + 1
+
+
 class Assignment(models.Model):
     STATUS_EMPTY = 'EMPTY'
     STATUS_POPULATED = 'POPUL'
@@ -87,6 +114,9 @@ class Assignment(models.Model):
 
     def save_deliverable(self, title, summary, content):
         """Single write path for both the MCP tool and the PATCH fallback."""
+        from activity.services import record_activity, diff
+        before = {'title': self.title, 'summary': self.summary, 'status': self.status,
+                  'content_chars': len(self.content)}
         if title:
             self.title = title[:255]
         self.summary = summary or ''
@@ -94,6 +124,9 @@ class Assignment(models.Model):
         self.status = self.STATUS_POPULATED
         self.populated_at = timezone.now()
         self.save(update_fields=['title', 'summary', 'content', 'status', 'populated_at'])
+        after = {'title': self.title, 'summary': self.summary, 'status': self.status,
+                 'content_chars': len(self.content)}
+        record_activity('update', 'assignment', self.pk, self.title, diff(before, after))
 
 
 class AgentConfig(models.Model):
