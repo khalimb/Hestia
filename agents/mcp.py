@@ -19,11 +19,12 @@ from .mcp_tools import TOOL_MAP, TOOLS, ToolError
 SUPPORTED_PROTOCOL_VERSIONS = ('2024-11-05', '2025-03-26', '2025-06-18')
 SERVER_INFO = {'name': 'hestia', 'version': '1.0.0'}
 INSTRUCTIONS = (
-    "Hestia — the household's recurring-expense tracker. Reads: dictionaries_get "
-    '(call first for ids), expenses_list, expense_get, occurrences_list, '
-    'activity_recent. Writes (tools marked WRITE): expenses_apply (batch of '
-    'creates + updates), dictionary_create/update/delete. Confirm every write '
-    'with the user before calling it, and never invent dictionary ids.'
+    "Hestia — the household's expense tracker: recurring expenses (with scheduled "
+    'occurrences) and one-off transactions, sharing one set of categories. Reads: '
+    'dictionaries_get (call first for ids), expenses_list, expense_get, '
+    'occurrences_list, transactions_list, activity_recent. Writes (tools marked '
+    'WRITE): expenses_apply, transactions_apply, dictionary_create/update/delete. '
+    'Confirm every write with the user before calling it, and never invent ids.'
 )
 
 

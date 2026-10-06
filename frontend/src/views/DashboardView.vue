@@ -70,11 +70,12 @@ async function markAsPaid(item) {
 
 const CHART_COLORS = ['#f97316', '#10b981', '#3b82f6', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f59e0b', '#06b6d4', '#84cc16']
 
+// Category chart covers recurring + one-off together (what a budget cares about).
 const typeChartData = computed(() => {
-  if (!dashboard.summary?.type_breakdown?.length) return null
-  const items = dashboard.summary.type_breakdown
+  if (!dashboard.summary?.combined_type_breakdown?.length) return null
+  const items = dashboard.summary.combined_type_breakdown
   return {
-    labels: items.map((t) => t.expense__expense_type__name || 'Uncategorised'),
+    labels: items.map((t) => t.name || 'Uncategorised'),
     datasets: [
       {
         data: items.map((t) => parseFloat(t.total)),
@@ -170,9 +171,19 @@ function dueDateClass(item) {
       <div class="grid-3 mb-4" v-if="dashboard.summary">
         <div class="card" v-for="ct in dashboard.summary.currency_totals" :key="ct.currency">
           <div class="card-body">
-            <p class="text-sm text-muted">Monthly Total ({{ ct.currency }})</p>
+            <p class="text-sm text-muted">Recurring this month ({{ ct.currency }})</p>
             <p class="summary-amount">{{ formatCurrency(ct.total, ct.currency) }}</p>
-            <p class="text-xs text-muted">{{ ct.count }} expense{{ ct.count !== 1 ? 's' : '' }}</p>
+            <p class="text-xs text-muted">{{ ct.count }} scheduled payment{{ ct.count !== 1 ? 's' : '' }}</p>
+          </div>
+        </div>
+        <div class="card" v-for="tt in dashboard.summary.transaction_currency_totals" :key="'t' + tt.currency">
+          <div class="card-body">
+            <p class="text-sm text-muted">One-off spending ({{ tt.currency }})</p>
+            <p class="summary-amount">{{ formatCurrency(tt.total, tt.currency) }}</p>
+            <p class="text-xs text-muted">
+              {{ tt.count }} transaction{{ tt.count !== 1 ? 's' : '' }} ·
+              <RouterLink to="/transactions" style="color:var(--color-primary); text-decoration:none">view</RouterLink>
+            </p>
           </div>
         </div>
         <div class="card">
@@ -194,7 +205,7 @@ function dueDateClass(item) {
       <div class="grid-2 mb-4">
         <!-- Expense type breakdown chart -->
         <div class="card" v-if="typeChartData">
-          <div class="card-header"><h3>By Expense Type</h3></div>
+          <div class="card-header"><h3>By Category</h3><span class="text-xs text-muted">recurring + one-off, this month</span></div>
           <div class="card-body" style="max-height: 350px; display: flex; justify-content: center;">
             <Pie :data="typeChartData" :options="chartOptions" />
           </div>

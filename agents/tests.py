@@ -91,8 +91,8 @@ class TransportTests(AgentsTestCase):
         names = {t['name'] for t in self.rpc('tools/list').json()['result']['tools']}
         self.assertEqual(names, {
             'dictionaries_get', 'expenses_list', 'expense_get', 'occurrences_list',
-            'activity_recent', 'expenses_apply', 'dictionary_create',
-            'dictionary_update', 'dictionary_delete',
+            'transactions_list', 'activity_recent', 'expenses_apply', 'transactions_apply',
+            'dictionary_create', 'dictionary_update', 'dictionary_delete',
         })
 
     def test_notification_202_and_no_slash_no_redirect(self):

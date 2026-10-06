@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     'dashboard',
     'agents',
     'activity',
+    'transactions',
 ]
 
 MIDDLEWARE = [

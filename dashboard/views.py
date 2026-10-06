@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from expenses.models import Subject, ExpenseType, Expense, Occurrence
 from expenses.services import ensure_occurrences_generated
+from transactions.models import Transaction
 
 
 class DashboardSummaryView(APIView):
@@ -40,10 +41,38 @@ class DashboardSummaryView(APIView):
             due_date=today, status='pending',
         ).count()
 
+        # One-off spending this month, and a combined per-type view so the
+        # category chart reflects recurring + variable together.
+        month_transactions = Transaction.objects.filter(
+            date__gte=first_of_month, date__lte=last_of_month,
+        )
+        transaction_totals = month_transactions.values('currency').annotate(
+            total=Sum('amount'), count=Count('id'),
+        ).order_by('currency')
+        transaction_types = month_transactions.values(
+            'expense_type__name',
+        ).annotate(total=Sum('amount'), count=Count('id'))
+
+        combined = {}
+        for row in type_breakdown:
+            name = row['expense__expense_type__name']
+            combined.setdefault(name, {'name': name, 'recurring': 0, 'one_off': 0})
+            combined[name]['recurring'] = row['total']
+        for row in transaction_types:
+            name = row['expense_type__name']
+            combined.setdefault(name, {'name': name, 'recurring': 0, 'one_off': 0})
+            combined[name]['one_off'] = row['total']
+        combined_breakdown = sorted(
+            ({**c, 'total': c['recurring'] + c['one_off']} for c in combined.values()),
+            key=lambda c: -c['total'],
+        )
+
         return Response({
             'month': today.strftime('%B %Y'),
             'currency_totals': list(currency_totals),
             'type_breakdown': list(type_breakdown),
+            'transaction_currency_totals': list(transaction_totals),
+            'combined_type_breakdown': combined_breakdown,
             'overdue_count': overdue_count,
             'due_today_count': due_today_count,
         })

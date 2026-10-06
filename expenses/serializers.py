@@ -9,6 +9,30 @@ from .models import (
 )
 
 
+def validate_payment_account_rule(attrs, instance=None):
+    """An account only makes sense for methods that draw from one (card,
+    direct debit). Shared by expenses and transactions. On partial updates
+    fall back to the stored values so a PATCH that switches the method to
+    e.g. Cash is caught too."""
+    def effective(field):
+        if field in attrs:
+            return attrs[field]
+        return getattr(instance, field, None) if instance else None
+
+    method = effective('payment_method')
+    account = effective('account')
+    if account is not None:
+        if method is None:
+            raise serializers.ValidationError({
+                'account': 'Choose a payment method that uses an account before setting one.',
+            })
+        if not method.requires_account:
+            raise serializers.ValidationError({
+                'account': f'"{method.name}" does not use an account.',
+            })
+    return attrs
+
+
 class SubjectSerializer(ActivityLoggedSerializerMixin, serializers.ModelSerializer):
     activity_entity = 'subject'
     activity_fields = {'name': 'name'}
@@ -109,26 +133,7 @@ class ExpenseSerializer(ActivityLoggedSerializerMixin, serializers.ModelSerializ
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
 
     def validate(self, attrs):
-        # An account only makes sense for methods that draw from one (card,
-        # direct debit). On partial updates fall back to the stored values so
-        # a PATCH that switches the method to e.g. Cash is caught too.
-        def effective(field):
-            if field in attrs:
-                return attrs[field]
-            return getattr(self.instance, field, None) if self.instance else None
-
-        method = effective('payment_method')
-        account = effective('account')
-        if account is not None:
-            if method is None:
-                raise serializers.ValidationError({
-                    'account': 'Choose a payment method that uses an account before setting one.',
-                })
-            if not method.requires_account:
-                raise serializers.ValidationError({
-                    'account': f'"{method.name}" does not use an account.',
-                })
-        return attrs
+        return validate_payment_account_rule(attrs, self.instance)
 
     def get_next_occurrence(self, obj):
         today = timezone.now().date()

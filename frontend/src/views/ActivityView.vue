@@ -61,7 +61,7 @@ function when(iso) {
 const ENTITY_LABELS = {
   expense: 'Expense', subject: 'Subject', expense_type: 'Expense type',
   payment_method: 'Payment method', payment_account: 'Account',
-  payment: 'Payment',
+  payment: 'Payment', transaction: 'Transaction',
 }
 
 function entityLabel(type) {

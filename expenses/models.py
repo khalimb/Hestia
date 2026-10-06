@@ -24,8 +24,8 @@ class Subject(models.Model):
         viewsets and the MCP tools so the rule lives in one place."""
         if self.is_default:
             return 'Default subjects cannot be deleted.'
-        if self.expenses.exists():
-            return 'Cannot delete subject with existing expenses.'
+        if self.expenses.exists() or self.transactions.exists():
+            return 'Cannot delete subject with existing expenses or transactions.'
         return None
 
 
@@ -49,8 +49,8 @@ class ExpenseType(models.Model):
         viewsets and the MCP tools so the rule lives in one place."""
         if self.is_default:
             return 'Default expense types cannot be deleted.'
-        if self.expenses.exists():
-            return 'Cannot delete expense type with existing expenses.'
+        if self.expenses.exists() or self.transactions.exists():
+            return 'Cannot delete expense type with existing expenses or transactions.'
         return None
 
 
@@ -80,8 +80,8 @@ class PaymentMethod(models.Model):
         viewsets and the MCP tools so the rule lives in one place."""
         if self.is_default:
             return 'Default payment methods cannot be deleted.'
-        if self.expenses.exists():
-            return 'Cannot delete a payment method that is in use by expenses.'
+        if self.expenses.exists() or self.transactions.exists():
+            return 'Cannot delete a payment method that is in use by expenses or transactions.'
         return None
 
 
@@ -108,8 +108,8 @@ class PaymentAccount(models.Model):
     def deletion_blocker(self):
         """Reason this entry cannot be deleted, or None. Shared by the API
         viewsets and the MCP tools so the rule lives in one place."""
-        if self.expenses.exists():
-            return 'Cannot delete an account that is in use by expenses.'
+        if self.expenses.exists() or self.transactions.exists():
+            return 'Cannot delete an account that is in use by expenses or transactions.'
         return None
 
 

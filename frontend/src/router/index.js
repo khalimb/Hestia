@@ -49,6 +49,11 @@ const routes = [
     component: () => import('../views/OccurrenceDetailView.vue'),
   },
   {
+    path: '/transactions',
+    name: 'Transactions',
+    component: () => import('../views/TransactionsView.vue'),
+  },
+  {
     path: '/activity',
     name: 'Activity',
     component: () => import('../views/ActivityView.vue'),
