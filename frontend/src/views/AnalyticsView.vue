@@ -135,11 +135,22 @@ function paidShareOf(bucket) {
   return (parseFloat(bucket.recurring_paid) / parseFloat(bucket.recurring_expected)) * 100
 }
 
+const SOURCE_LABELS = { ecb: 'ECB', latest: "today's rate", manual: 'manual' }
+
+// "1 GBP = 1.3225 USD (ECB)" for ordinary rates; "1 USD = 11,801 UZS" for tiny ones.
 const ratesLine = computed(() => {
   if (!normalised.value) return ''
   return Object.entries(normalised.value.rates)
     .filter(([cur]) => cur !== 'USD')
-    .map(([cur, rate]) => `1 ${cur} = ${parseFloat(rate).toFixed(4)} USD`)
+    .map(([cur, rate]) => {
+      const r = parseFloat(rate)
+      const src = normalised.value.rate_sources?.[cur] || ''
+      const label = SOURCE_LABELS[src] || src
+      const text = r < 0.01
+        ? `1 USD = ${(1 / r).toLocaleString('en-GB', { maximumFractionDigits: 2 })} ${cur}`
+        : `1 ${cur} = ${r.toFixed(4)} USD`
+      return label ? `${text} (${label})` : text
+    })
     .join(' · ')
 })
 </script>
@@ -263,9 +274,9 @@ const ratesLine = computed(() => {
         </div>
       </div>
       <p v-if="normalised" class="text-xs text-muted mb-4" style="margin-top:-0.5rem">
-        <span v-if="ratesLine">ECB rates on {{ normalised.rate_date }}: {{ ratesLine }}.</span>
+        <span v-if="ratesLine">Rates as of {{ normalised.rate_date }}: {{ ratesLine }}.</span>
         <span v-else-if="data.currencies.length === 1 && !normalised.unconverted.length">Single currency, no conversion needed.</span>
-        <span v-if="normalised.unconverted.length" style="color:var(--color-danger)"> No rate available for {{ normalised.unconverted.join(', ') }} — excluded from the USD figures.</span>
+        <span v-if="normalised.unconverted.length" style="color:var(--color-danger)"> No rate available for {{ normalised.unconverted.join(', ') }} — excluded from the USD figures. <RouterLink to="/settings" style="color:inherit">Set one in Settings</RouterLink>.</span>
       </p>
 
       <!-- 3. Breakdowns for one bucket -->

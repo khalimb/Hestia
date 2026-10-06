@@ -133,6 +133,7 @@ class NormalisationTests(APITestCase):
         n = data['normalised']
         self.assertTrue(n['normalised'])
         self.assertEqual(n['rates'], {'EUR': '1.10000000', 'GBP': '1.25000000', 'USD': '1'})
+        self.assertEqual(n['rate_sources'], {'EUR': 'ecb', 'GBP': 'ecb', 'USD': 'USD'})
         self.assertEqual(n['unconverted'], [])
         self.assertEqual(str(n['recurring_expected']), '1250.00')
         self.assertEqual(str(n['one_off']), '18.00')                 # 10*1.10 + 7
@@ -142,7 +143,7 @@ class NormalisationTests(APITestCase):
         self.assertEqual(cats, {'Rent': '1250.00', 'Uncategorised': '18.00'})
         self.assertEqual(str(n['by_month'][0]['total']), '1268.00')
 
-    @override_settings(FX_API_BASE='http://127.0.0.1:9')   # nothing listens: fetch fails fast
+    @override_settings(FX_API_BASE='http://127.0.0.1:9', FX_FALLBACK_API_BASE='http://127.0.0.1:9')
     def test_missing_rate_is_reported_not_guessed(self):
         FxRate.objects.filter(currency='EUR').delete()
         data = spend_summary(date(2026, 9, 1), date(2026, 9, 30), normalise_to='USD')
@@ -151,7 +152,7 @@ class NormalisationTests(APITestCase):
         self.assertEqual(str(n['one_off']), '7.00')                  # EUR left out, not silently 1:1
         self.assertEqual(str(n['total']), '1257.00')
 
-    @override_settings(FX_API_BASE='http://127.0.0.1:9')
+    @override_settings(FX_API_BASE='http://127.0.0.1:9', FX_FALLBACK_API_BASE='http://127.0.0.1:9')
     def test_stale_cached_rate_used_as_fallback(self):
         FxRate.objects.filter(currency='EUR').update(date=date(2026, 9, 25))
         n = spend_summary(date(2026, 9, 1), date(2026, 9, 30), normalise_to='USD')['normalised']

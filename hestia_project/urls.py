@@ -16,6 +16,7 @@ urlpatterns = [
     path('api/v1/dashboard/', include('dashboard.urls')),
     path('api/v1/agents/', include('agents.urls')),
     path('api/v1/activity/', include('activity.urls')),
+    path('api/v1/', include('core.urls')),
     # MCP endpoint for agent clients: the token in the URL is the auth.
     # Both slash variants: a 301 would drop the POST body and break the handshake.
     path('mcp/<str:token>/', mcp_views.endpoint, name='mcp-endpoint'),

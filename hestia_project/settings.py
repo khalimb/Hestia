@@ -167,3 +167,5 @@ if not DEBUG:
 
 # Exchange-rate source for analytics normalisation (ECB rates via Frankfurter).
 FX_API_BASE = os.environ.get('FX_API_BASE', 'https://api.frankfurter.dev/v1')
+# Broader daily feed (~160 currencies, latest only) for what the ECB does not publish.
+FX_FALLBACK_API_BASE = os.environ.get('FX_FALLBACK_API_BASE', 'https://open.er-api.com/v6')

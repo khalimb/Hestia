@@ -42,6 +42,13 @@ const editingAccountId = ref(null)
 const accountForm = ref({ name: '', notes: '' })
 const accountError = ref('')
 
+// Exchange rates (manual overrides)
+const fxRates = ref([])
+const fxForm = ref({ currency: '', units_per_usd: '', note: '' })
+const fxError = ref('')
+const fxSuccess = ref('')
+const fxBusy = ref(false)
+
 // Agent Access (MCP) + agent prompt template
 const newTokenName = ref('')
 const tokenBusyMcp = ref(false)
@@ -62,6 +69,7 @@ onMounted(() => {
   store.fetchExpenseTypes()
   store.fetchPaymentMethods()
   store.fetchPaymentAccounts()
+  fetchFxRates()
   agents.fetchTokens().catch(() => { agentError.value = 'Failed to load MCP tokens.' })
   agents.fetchConfig()
     .then((cfg) => { promptTemplateDraft.value = cfg.prompt_template })
@@ -257,6 +265,49 @@ async function handleDeleteAccount(account) {
     await store.deletePaymentAccount(account.id)
   } catch (e) {
     alert(e.response?.data?.detail || 'Cannot delete this account.')
+  }
+}
+
+// Exchange rates
+async function fetchFxRates() {
+  try {
+    const { data } = await api.get('fx/manual/')
+    fxRates.value = data
+  } catch {
+    fxError.value = 'Failed to load exchange rates.'
+  }
+}
+
+async function saveFxRate() {
+  fxError.value = ''
+  fxSuccess.value = ''
+  fxBusy.value = true
+  try {
+    const payload = {
+      currency: fxForm.value.currency.trim().toUpperCase(),
+      units_per_usd: parseFloat(fxForm.value.units_per_usd),
+      note: fxForm.value.note,
+    }
+    await api.post('fx/manual/', payload)
+    fxSuccess.value = `Rate for ${payload.currency} saved. It now overrides the feeds for that currency.`
+    fxForm.value = { currency: '', units_per_usd: '', note: '' }
+    await fetchFxRates()
+  } catch (e) {
+    const data = e.response?.data
+    fxError.value = data && typeof data === 'object' ? Object.values(data).flat().join(' ') : 'Failed to save rate.'
+  } finally {
+    fxBusy.value = false
+  }
+}
+
+async function deleteFxRate(rate) {
+  if (!confirm(`Remove the manual rate for ${rate.currency}? The feeds will be used again.`)) return
+  fxError.value = ''
+  try {
+    await api.delete(`fx/manual/${rate.currency}/`)
+    fxRates.value = fxRates.value.filter((r) => r.currency !== rate.currency)
+  } catch {
+    fxError.value = 'Failed to remove rate.'
   }
 }
 
@@ -516,6 +567,53 @@ function varTag(name) {
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- Exchange rates -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <h3>Exchange Rates</h3>
+      </div>
+      <div class="card-body">
+        <p class="text-sm text-muted mb-4">
+          Analytics converts everything to USD using daily rates: the European Central Bank feed for the
+          30 currencies it publishes, and a broader daily feed for the rest. Set a manual rate here for
+          anything neither covers, or to pin a rate. A manual rate wins for that currency until you remove it.
+        </p>
+        <div v-if="fxSuccess" class="alert alert-success">{{ fxSuccess }}</div>
+        <div v-if="fxError" class="alert alert-danger">{{ fxError }}</div>
+
+        <div class="form-group">
+          <label class="form-label">Manual rates</label>
+          <p v-if="!fxRates.length" class="text-sm text-muted">None set. Feeds are used for every currency.</p>
+          <table v-else>
+            <thead>
+              <tr><th>Currency</th><th>Rate</th><th>Note</th><th>Set by</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in fxRates" :key="r.currency">
+                <td style="font-weight:600">{{ r.currency }}</td>
+                <td class="font-mono text-sm">1 USD = {{ parseFloat(r.units_per_usd).toLocaleString('en-GB', { maximumFractionDigits: 6 }) }} {{ r.currency }}</td>
+                <td class="text-sm text-muted">{{ r.note || '—' }}</td>
+                <td class="text-sm text-muted">{{ r.updated_by_name || '—' }} · {{ r.updated_at.slice(0, 10) }}</td>
+                <td class="text-right"><button class="btn btn-sm btn-outline" style="color:var(--color-danger)" @click="deleteFxRate(r)">Remove</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <form class="form-group" style="margin-bottom:0" @submit.prevent="saveFxRate">
+          <label class="form-label">Set a rate</label>
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+            <span class="text-sm">1 USD =</span>
+            <input v-model="fxForm.units_per_usd" type="number" step="any" min="0" class="form-input" style="max-width:160px" placeholder="11800" required />
+            <input v-model="fxForm.currency" type="text" class="form-input" style="max-width:90px; text-transform:uppercase" placeholder="UZS" maxlength="3" required />
+            <input v-model="fxForm.note" type="text" class="form-input" style="max-width:220px" placeholder="Note (optional)" />
+            <button type="submit" class="btn btn-sm btn-primary" :disabled="fxBusy">{{ fxBusy ? 'Saving…' : 'Save rate' }}</button>
+          </div>
+          <p class="text-xs text-muted mt-1">Enter how many units of the currency one US dollar buys. Saving an existing currency replaces its rate.</p>
+        </form>
       </div>
     </div>
 

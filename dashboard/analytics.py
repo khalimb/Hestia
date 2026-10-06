@@ -102,11 +102,11 @@ def spend_summary(date_from, date_to, normalise_to=None):
     # --- optional normalisation into one currency (USD) ---
     normalised = None
     if normalise_to == 'USD' and store:
-        rates, unconverted, rate_date = rates_to_usd(list(store), date_to)
+        rates, unconverted, rate_date, sources = rates_to_usd(list(store), date_to)
         merged = _bucket({}, 'USD', months)
         merged.update({'normalised': True, 'rate_date': rate_date.isoformat(),
                        'rates': {c: str(r) for c, r in rates.items()},
-                       'unconverted': unconverted})
+                       'rate_sources': sources, 'unconverted': unconverted})
         for b in store.values():
             rate = rates.get(b['currency'])
             if rate is None:
