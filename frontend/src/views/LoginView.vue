@@ -49,7 +49,7 @@ async function handleLogin() {
         </form>
 
         <p class="auth-footer">
-          Don't have an account? <RouterLink to="/register">Create one</RouterLink>
+          Need an account? Ask a household admin for an invite link.
         </p>
       </div>
     </div>

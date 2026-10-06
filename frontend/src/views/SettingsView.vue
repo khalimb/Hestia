@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useExpenseStore } from '../stores/expenses'
 import { useAgentStore } from '../stores/agents'
@@ -42,6 +42,22 @@ const editingAccountId = ref(null)
 const accountForm = ref({ name: '', notes: '' })
 const accountError = ref('')
 
+// Members + invites (admin manages; everyone can see the list)
+const members = ref([])
+const invites = ref([])
+const memberError = ref('')
+const memberSuccess = ref('')
+const memberBusy = ref(false)
+const isAdmin = computed(() => !!auth.user?.is_staff)
+const showMemberForm = ref(false)
+const memberForm = ref({ email: '', first_name: '', last_name: '', password: '', is_staff: false })
+const showPasswordForm = ref(false)
+const passwordTarget = ref(null)
+const passwordForm = ref({ password: '' })
+const inviteForm = ref({ email: '', note: '', make_admin: false })
+const inviteResult = ref(null)   // { link, email } shown once after minting
+const inviteCopyState = ref('')
+
 // Exchange rates (manual overrides)
 const fxRates = ref([])
 const fxForm = ref({ currency: '', units_per_usd: '', note: '' })
@@ -69,6 +85,7 @@ onMounted(() => {
   store.fetchExpenseTypes()
   store.fetchPaymentMethods()
   store.fetchPaymentAccounts()
+  fetchMembers()
   fetchFxRates()
   agents.fetchTokens().catch(() => { agentError.value = 'Failed to load MCP tokens.' })
   agents.fetchConfig()
@@ -268,6 +285,124 @@ async function handleDeleteAccount(account) {
   }
 }
 
+// Members + invites
+function memberErrorText(e, fallback) {
+  const data = e.response?.data
+  if (data && typeof data === 'object') return Object.values(data).flat().join(' ')
+  return fallback
+}
+
+async function fetchMembers() {
+  try {
+    const { data } = await api.get('auth/members/')
+    members.value = data
+    if (isAdmin.value) {
+      const res = await api.get('auth/invites/')
+      invites.value = res.data
+    }
+  } catch {
+    memberError.value = 'Failed to load members.'
+  }
+}
+
+function openCreateMember() {
+  memberForm.value = { email: '', first_name: '', last_name: '', password: '', is_staff: false }
+  memberError.value = ''
+  showMemberForm.value = true
+}
+
+async function submitMember() {
+  memberError.value = ''
+  memberSuccess.value = ''
+  memberBusy.value = true
+  try {
+    const { data } = await api.post('auth/members/', memberForm.value)
+    showMemberForm.value = false
+    memberSuccess.value = `Account created for ${data.display_name} (${data.email}). Give them the temporary password you set; they can change it in their profile.`
+    await fetchMembers()
+  } catch (e) {
+    memberError.value = memberErrorText(e, 'Failed to create member.')
+  } finally {
+    memberBusy.value = false
+  }
+}
+
+async function patchMember(member, changes, confirmText) {
+  if (confirmText && !confirm(confirmText)) return
+  memberError.value = ''
+  memberSuccess.value = ''
+  try {
+    await api.patch(`auth/members/${member.id}/`, changes)
+    await fetchMembers()
+    if (member.id === auth.user?.id) await auth.fetchUser()
+  } catch (e) {
+    memberError.value = memberErrorText(e, 'Failed to update member.')
+  }
+}
+
+function openPasswordForm(member) {
+  passwordTarget.value = member
+  passwordForm.value = { password: '' }
+  memberError.value = ''
+  showPasswordForm.value = true
+}
+
+async function submitPassword() {
+  memberError.value = ''
+  memberSuccess.value = ''
+  memberBusy.value = true
+  try {
+    const { data } = await api.post(`auth/members/${passwordTarget.value.id}/password/`, passwordForm.value)
+    showPasswordForm.value = false
+    memberSuccess.value = data.detail
+  } catch (e) {
+    memberError.value = memberErrorText(e, 'Failed to set password.')
+  } finally {
+    memberBusy.value = false
+  }
+}
+
+async function createInvite() {
+  memberError.value = ''
+  memberSuccess.value = ''
+  memberBusy.value = true
+  try {
+    const { data } = await api.post('auth/invites/', inviteForm.value)
+    inviteResult.value = data
+    inviteCopyState.value = ''
+    inviteForm.value = { email: '', note: '', make_admin: false }
+    await fetchMembers()
+  } catch (e) {
+    memberError.value = memberErrorText(e, 'Failed to create invite.')
+  } finally {
+    memberBusy.value = false
+  }
+}
+
+async function copyInviteLink() {
+  try {
+    await navigator.clipboard.writeText(inviteResult.value.link)
+    inviteCopyState.value = 'copied'
+    setTimeout(() => { if (inviteCopyState.value === 'copied') inviteCopyState.value = '' }, 2500)
+  } catch {
+    inviteCopyState.value = 'manual'
+  }
+}
+
+async function revokeInvite(invite) {
+  if (!confirm(`Revoke the invite${invite.note ? ' for ' + invite.note : ''}?`)) return
+  try {
+    await api.delete(`auth/invites/${invite.id}/`)
+    invites.value = invites.value.filter((i) => i.id !== invite.id)
+  } catch {
+    memberError.value = 'Failed to revoke invite.'
+  }
+}
+
+function formatWhen(iso) {
+  return iso ? iso.slice(0, 16).replace('T', ' ') : 'never'
+}
+
 // Exchange rates
 async function fetchFxRates() {
   try {
@@ -431,6 +566,106 @@ function varTag(name) {
             {{ loading ? 'Saving...' : 'Save Changes' }}
           </button>
         </form>
+      </div>
+    </div>
+
+    <!-- Members -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <h3>Members</h3>
+        <div v-if="isAdmin" class="flex gap-2">
+          <button class="btn btn-sm btn-primary" @click="openCreateMember">+ Add member</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <p class="text-sm text-muted mb-4">
+          Everyone here shares the household's expenses, transactions and dictionaries, and every change is
+          attributed to the person who made it. Registration is by invitation only.
+          <template v-if="!isAdmin"> Ask an admin to add someone or send an invite link.</template>
+        </p>
+        <div v-if="memberSuccess" class="alert alert-success">{{ memberSuccess }}</div>
+        <div v-if="memberError" class="alert alert-danger">{{ memberError }}</div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Last login</th>
+              <th v-if="isAdmin"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in members" :key="m.id" :style="m.is_active ? '' : 'opacity:0.55'">
+              <td style="font-weight:500">
+                {{ m.display_name }}
+                <span v-if="m.id === auth.user?.id" class="text-xs text-muted">(you)</span>
+              </td>
+              <td class="text-sm">{{ m.email }}</td>
+              <td>
+                <span :class="['badge', m.is_active ? (m.is_staff ? 'badge-paid' : 'badge-pending') : 'badge-overdue']">
+                  {{ !m.is_active ? 'Deactivated' : (m.is_staff ? 'Admin' : 'Member') }}
+                </span>
+              </td>
+              <td class="text-sm text-muted">{{ formatWhen(m.last_login) }}</td>
+              <td v-if="isAdmin" class="text-right" style="white-space:nowrap">
+                <template v-if="m.id !== auth.user?.id">
+                  <button v-if="m.is_active" class="btn btn-sm btn-outline" @click="patchMember(m, { is_staff: !m.is_staff })">
+                    {{ m.is_staff ? 'Remove admin' : 'Make admin' }}
+                  </button>
+                  <button class="btn btn-sm btn-outline" style="margin-left:0.25rem" @click="openPasswordForm(m)">Reset password</button>
+                  <button v-if="m.is_active" class="btn btn-sm btn-outline" style="margin-left:0.25rem; color:var(--color-danger)"
+                          @click="patchMember(m, { is_active: false }, `Deactivate ${m.display_name}? They will no longer be able to sign in; their records stay.`)">Deactivate</button>
+                  <button v-else class="btn btn-sm btn-outline" style="margin-left:0.25rem" @click="patchMember(m, { is_active: true })">Reactivate</button>
+                </template>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Invites (admin) -->
+        <div v-if="isAdmin" class="form-group" style="margin-top:1.25rem; margin-bottom:0">
+          <label class="form-label">Invite link</label>
+          <div v-if="inviteResult" class="alert alert-success" style="display:block">
+            <p class="text-sm" style="font-weight:600; margin-bottom:0.5rem">Invite created{{ inviteResult.email ? ' for ' + inviteResult.email : '' }}. Send this link — it works once and expires in 7 days.</p>
+            <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+              <code style="background:var(--color-gray-100,#f3f4f6); padding:0.25rem 0.5rem; border-radius:0.375rem; font-size:0.75rem; word-break:break-all">{{ inviteResult.link }}</code>
+              <button class="btn btn-sm btn-primary" @click="copyInviteLink">{{ inviteCopyState === 'copied' ? '✓ Copied' : 'Copy link' }}</button>
+              <button class="btn btn-sm btn-outline" @click="inviteResult = null">Dismiss</button>
+            </div>
+            <p v-if="inviteCopyState === 'manual'" class="text-xs text-muted">Clipboard blocked — select and copy the link above.</p>
+          </div>
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+            <input v-model="inviteForm.note" type="text" class="form-input" style="max-width:160px" placeholder="Who it's for (e.g. Mum)" />
+            <input v-model="inviteForm.email" type="email" class="form-input" style="max-width:240px" placeholder="Their email (optional)" />
+            <label class="text-sm" style="display:flex; align-items:center; gap:0.375rem; cursor:pointer">
+              <input v-model="inviteForm.make_admin" type="checkbox" /> admin
+            </label>
+            <button class="btn btn-sm btn-primary" :disabled="memberBusy" @click="createInvite">Create invite link</button>
+          </div>
+          <p class="text-xs text-muted mt-1">Or add the member yourself with a temporary password using "+ Add member" above.</p>
+
+          <div v-if="invites.length" style="margin-top:0.75rem">
+            <p class="text-xs text-muted" style="margin-bottom:0.25rem">Invites</p>
+            <table>
+              <tbody>
+                <tr v-for="i in invites" :key="i.id">
+                  <td class="text-sm">{{ i.note || '—' }} <span class="text-xs text-muted">{{ i.email }}</span></td>
+                  <td class="text-xs text-muted">by {{ i.created_by_name }} · {{ formatWhen(i.created_at) }}</td>
+                  <td>
+                    <span :class="['badge', i.used_at ? 'badge-paid' : (i.is_valid ? 'badge-pending' : 'badge-overdue')]">
+                      {{ i.used_at ? 'Used by ' + i.used_by_name : (i.is_valid ? 'Pending' : 'Expired') }}
+                    </span>
+                  </td>
+                  <td class="text-right">
+                    <button v-if="!i.used_at" class="btn btn-sm btn-outline" style="color:var(--color-danger)" @click="revokeInvite(i)">Revoke</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -729,6 +964,72 @@ function varTag(name) {
               Reset to default
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Member Modal -->
+    <div v-if="showMemberForm" class="modal-overlay" @click.self="showMemberForm = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Add Member</h3>
+          <button @click="showMemberForm = false" class="btn btn-sm btn-outline">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div v-if="memberError" class="alert alert-danger">{{ memberError }}</div>
+          <form @submit.prevent="submitMember">
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">First name</label>
+                <input v-model="memberForm.first_name" type="text" class="form-input" required />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Last name</label>
+                <input v-model="memberForm.last_name" type="text" class="form-input" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Email</label>
+              <input v-model="memberForm.email" type="email" class="form-input" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Temporary password</label>
+              <input v-model="memberForm.password" type="text" class="form-input" minlength="8" required placeholder="At least 8 characters; share it with them" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" style="display:flex; align-items:center; gap:0.5rem; cursor:pointer">
+                <input v-model="memberForm.is_staff" type="checkbox" /> Household admin (can manage members)
+              </label>
+            </div>
+            <div class="modal-footer" style="padding:0; border:none; margin-top:1rem">
+              <button type="button" class="btn btn-outline" @click="showMemberForm = false">Cancel</button>
+              <button type="submit" class="btn btn-primary" :disabled="memberBusy">{{ memberBusy ? 'Creating…' : 'Create account' }}</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Set Password Modal -->
+    <div v-if="showPasswordForm" class="modal-overlay" @click.self="showPasswordForm = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Reset password · {{ passwordTarget?.display_name }}</h3>
+          <button @click="showPasswordForm = false" class="btn btn-sm btn-outline">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div v-if="memberError" class="alert alert-danger">{{ memberError }}</div>
+          <form @submit.prevent="submitPassword">
+            <div class="form-group">
+              <label class="form-label">New temporary password</label>
+              <input v-model="passwordForm.password" type="text" class="form-input" minlength="8" required />
+              <p class="text-xs text-muted mt-1">Share it with them; they can change it from their profile.</p>
+            </div>
+            <div class="modal-footer" style="padding:0; border:none; margin-top:1rem">
+              <button type="button" class="btn btn-outline" @click="showPasswordForm = false">Cancel</button>
+              <button type="submit" class="btn btn-primary" :disabled="memberBusy">{{ memberBusy ? 'Saving…' : 'Set password' }}</button>
+            </div>
+          </form>
         </div>
       </div>
     </div>
