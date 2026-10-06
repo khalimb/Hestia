@@ -25,6 +25,9 @@ async function markAsPaid(occ) {
       amount_paid: occ.expected_amount,
       currency: occ.currency,
       paid_date: new Date().toISOString().split('T')[0],
+      // Prefill from the expense's configured method so quick payments are
+      // attributed consistently without opening the full payment form.
+      payment_method: expense.value?.payment_method_name || '',
     })
     await fetchData()
   } catch (e) {
@@ -151,6 +154,19 @@ function formatFileSize(bytes) {
             <span :class="['badge', expense.is_active ? 'badge-paid' : 'badge-overdue']">
               {{ expense.is_active ? 'Active' : 'Inactive' }}
             </span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <p class="text-xs text-muted">Paid By</p>
+            <p style="font-weight:600">{{ expense.payment_method_name || '—' }}</p>
+            <p v-if="expense.account_name" class="text-sm text-muted">from {{ expense.account_name }}</p>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <p class="text-xs text-muted">Responsible</p>
+            <p style="font-weight:600">{{ expense.responsible_name || '—' }}</p>
           </div>
         </div>
       </div>

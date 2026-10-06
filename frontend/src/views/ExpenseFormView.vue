@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useExpenseStore } from '../stores/expenses'
 import api from '../api/axios'
@@ -22,12 +22,32 @@ const form = ref({
   currency: 'GBP',
   expense_type: '',
   recurrence_type: 'monthly',
+  payment_method: '',
+  account: '',
+  responsible: '',
   start_date: new Date().toISOString().split('T')[0],
   end_date: '',
 })
 
+// The account field only applies to methods that draw from one (card, direct
+// debit). Mirrors the API rule so the user never submits an invalid pair.
+const selectedMethod = computed(() =>
+  store.paymentMethods.find((m) => m.id === form.value.payment_method) || null,
+)
+const accountApplies = computed(() => !!selectedMethod.value?.requires_account)
+
+watch(accountApplies, (applies) => {
+  if (!applies) form.value.account = ''
+})
+
 onMounted(async () => {
-  await Promise.all([store.fetchSubjects(), store.fetchExpenseTypes()])
+  await Promise.all([
+    store.fetchSubjects(),
+    store.fetchExpenseTypes(),
+    store.fetchPaymentMethods(),
+    store.fetchPaymentAccounts(),
+    store.fetchUsers(),
+  ])
   if (isEdit.value) {
     try {
       const { data } = await api.get(`expenses/${route.params.id}/`)
@@ -39,6 +59,9 @@ onMounted(async () => {
         currency: data.currency,
         expense_type: data.expense_type || '',
         recurrence_type: data.recurrence_type,
+        payment_method: data.payment_method || '',
+        account: data.account || '',
+        responsible: data.responsible || '',
         start_date: data.start_date,
         end_date: data.end_date || '',
       }
@@ -55,6 +78,9 @@ async function handleSubmit() {
   if (!payload.end_date) payload.end_date = null
   if (!payload.subject) payload.subject = null
   if (!payload.expense_type) payload.expense_type = null
+  if (!payload.payment_method) payload.payment_method = null
+  if (!payload.account || !accountApplies.value) payload.account = null
+  if (!payload.responsible) payload.responsible = null
   payload.amount = parseFloat(payload.amount)
 
   try {
@@ -138,6 +164,37 @@ async function handleSubmit() {
               <option value="biannual">Biannual</option>
               <option value="annual">Annual</option>
               <option value="biennial">Biennial</option>
+            </select>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Payment Method <span class="text-muted text-xs">(optional)</span></label>
+              <select v-model="form.payment_method" class="form-select">
+                <option value="">None</option>
+                <option v-for="m in store.paymentMethods" :key="m.id" :value="m.id">{{ m.name }}</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">
+                Account
+                <span class="text-muted text-xs">{{ accountApplies ? '(optional)' : '(n/a for this method)' }}</span>
+              </label>
+              <select v-model="form.account" class="form-select" :disabled="!accountApplies">
+                <option value="">None</option>
+                <option v-for="a in store.paymentAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+              </select>
+              <p v-if="accountApplies && !store.paymentAccounts.length" class="text-xs text-muted mt-1">
+                No accounts yet. Add them in Settings.
+              </p>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Responsible for paying <span class="text-muted text-xs">(optional)</span></label>
+            <select v-model="form.responsible" class="form-select">
+              <option value="">Nobody in particular</option>
+              <option v-for="u in store.users" :key="u.id" :value="u.id">{{ u.display_name }}</option>
             </select>
           </div>
 

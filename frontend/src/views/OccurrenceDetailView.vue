@@ -2,10 +2,12 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { format, parseISO } from 'date-fns'
+import { useExpenseStore } from '../stores/expenses'
 import api from '../api/axios'
 
 const route = useRoute()
 const router = useRouter()
+const store = useExpenseStore()
 const occurrence = ref(null)
 const payments = ref([])
 const loading = ref(true)
@@ -23,7 +25,16 @@ const paymentError = ref('')
 const paymentLoading = ref(false)
 
 onMounted(async () => {
-  await fetchData()
+  await Promise.all([fetchData(), store.fetchPaymentMethods()])
+})
+
+// Options for the payment's method: the configured dictionary, plus the
+// expense's own method name if it is somehow not in the list (e.g. renamed).
+const methodOptions = computed(() => {
+  const names = store.paymentMethods.map((m) => m.name)
+  const own = occurrence.value?.expense_payment_method_name
+  if (own && !names.includes(own)) names.unshift(own)
+  return names
 })
 
 async function fetchData() {
@@ -65,7 +76,8 @@ function openPaymentForm() {
     amount_paid: remaining.value.toFixed(2),
     currency: occurrence.value.currency,
     paid_date: new Date().toISOString().split('T')[0],
-    payment_method: '',
+    // Default to how the expense is normally paid; the user can override.
+    payment_method: occurrence.value.expense_payment_method_name || '',
     notes: '',
   }
   paymentError.value = ''
@@ -224,12 +236,7 @@ async function deletePayment(payment) {
                 <label class="form-label">Payment Method</label>
                 <select v-model="paymentForm.payment_method" class="form-select">
                   <option value="">Select...</option>
-                  <option value="Bank Transfer">Bank Transfer</option>
-                  <option value="Direct Debit">Direct Debit</option>
-                  <option value="Credit Card">Credit Card</option>
-                  <option value="Debit Card">Debit Card</option>
-                  <option value="Cash">Cash</option>
-                  <option value="Other">Other</option>
+                  <option v-for="name in methodOptions" :key="name" :value="name">{{ name }}</option>
                 </select>
               </div>
               <div class="form-group">

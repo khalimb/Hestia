@@ -5,8 +5,13 @@ from rest_framework.throttling import ScopedRateThrottle
 from django.utils import timezone
 
 from core.authentication import ImportTokenAuthentication
-from expenses.models import Subject, ExpenseType, Expense
-from expenses.serializers import SubjectSerializer, ExpenseTypeSerializer, ExpenseSerializer
+from django.contrib.auth import get_user_model
+
+from expenses.models import Subject, ExpenseType, PaymentMethod, PaymentAccount, Expense
+from expenses.serializers import (
+    SubjectSerializer, ExpenseTypeSerializer, PaymentMethodSerializer,
+    PaymentAccountSerializer, ExpenseSerializer,
+)
 from .models import AgentImportConfig, generate_import_token
 from .import_serializers import AgentImportConfigSerializer
 from .import_prompt import build_prompt, DEFAULT_PROMPT_TEMPLATE
@@ -84,7 +89,7 @@ class ImportExpenseCreateView(generics.CreateAPIView):
 
 
 class ImportOptionsView(APIView):
-    """Let the agent fetch the latest subjects / expense types / recurrence types."""
+    """Let the agent fetch the latest subjects, expense types, payment methods, accounts, users, and recurrence types."""
     authentication_classes = [ImportTokenAuthentication]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'agent_import'
@@ -97,5 +102,18 @@ class ImportOptionsView(APIView):
             'expense_types': ExpenseTypeSerializer(
                 ExpenseType.objects.order_by('name'), many=True,
             ).data,
+            'payment_methods': PaymentMethodSerializer(
+                PaymentMethod.objects.order_by('name'), many=True,
+            ).data,
+            'accounts': PaymentAccountSerializer(
+                PaymentAccount.objects.order_by('name'), many=True,
+            ).data,
+            # Ids + display names only: the agent needs to pick a person, not
+            # see contact details.
+            'users': [
+                {'id': str(u.id), 'display_name': u.display_name}
+                for u in get_user_model().objects.filter(is_active=True)
+                .order_by('first_name', 'last_name')
+            ],
             'recurrence_types': [value for value, _ in Expense.RECURRENCE_CHOICES],
         })

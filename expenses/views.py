@@ -3,10 +3,13 @@ from rest_framework import viewsets, generics, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import Subject, ExpenseType, Expense, Occurrence
+from .models import (
+    Subject, ExpenseType, PaymentMethod, PaymentAccount, Expense, Occurrence,
+)
 from .serializers import (
-    SubjectSerializer, ExpenseTypeSerializer, ExpenseSerializer,
-    ExpenseDetailSerializer, OccurrenceSerializer,
+    SubjectSerializer, ExpenseTypeSerializer, PaymentMethodSerializer,
+    PaymentAccountSerializer, ExpenseSerializer, ExpenseDetailSerializer,
+    OccurrenceSerializer,
 )
 from .services import ensure_occurrences_generated, force_generate_occurrences
 
@@ -55,9 +58,53 @@ class ExpenseTypeViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
 
+class PaymentMethodViewSet(viewsets.ModelViewSet):
+    queryset = PaymentMethod.objects.all()
+    serializer_class = PaymentMethodSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        method = self.get_object()
+        if method.is_default:
+            return Response(
+                {'detail': 'Default payment methods cannot be deleted.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if method.expenses.exists():
+            return Response(
+                {'detail': 'Cannot delete a payment method that is in use by expenses.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+
+class PaymentAccountViewSet(viewsets.ModelViewSet):
+    queryset = PaymentAccount.objects.all()
+    serializer_class = PaymentAccountSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        account = self.get_object()
+        if account.expenses.exists():
+            return Response(
+                {'detail': 'Cannot delete an account that is in use by expenses.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+
 class ExpenseViewSet(viewsets.ModelViewSet):
-    queryset = Expense.objects.select_related('subject', 'expense_type').all()
-    filterset_fields = ['subject', 'expense_type', 'is_active', 'currency', 'recurrence_type']
+    queryset = Expense.objects.select_related(
+        'subject', 'expense_type', 'payment_method', 'account', 'responsible',
+    ).all()
+    filterset_fields = [
+        'subject', 'expense_type', 'is_active', 'currency', 'recurrence_type',
+        'payment_method', 'account', 'responsible',
+    ]
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'amount', 'created_at']
 
@@ -149,7 +196,8 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
 
 class OccurrenceViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Occurrence.objects.select_related('expense').all()
+    # expense__payment_method feeds OccurrenceSerializer.expense_payment_method_name.
+    queryset = Occurrence.objects.select_related('expense', 'expense__payment_method').all()
     serializer_class = OccurrenceSerializer
     filterset_fields = ['status', 'expense', 'currency']
     ordering_fields = ['due_date', 'expected_amount']

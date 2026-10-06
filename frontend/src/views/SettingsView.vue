@@ -28,6 +28,18 @@ const editingTypeId = ref(null)
 const typeForm = ref({ name: '' })
 const typeError = ref('')
 
+// Payment Method management
+const showMethodForm = ref(false)
+const editingMethodId = ref(null)
+const methodForm = ref({ name: '', requires_account: false })
+const methodError = ref('')
+
+// Payment Account management
+const showAccountForm = ref(false)
+const editingAccountId = ref(null)
+const accountForm = ref({ name: '', notes: '' })
+const accountError = ref('')
+
 // Agent Import
 const importConfig = ref(null)
 const templateDraft = ref('')
@@ -47,6 +59,8 @@ onMounted(() => {
   }
   store.fetchSubjects()
   store.fetchExpenseTypes()
+  store.fetchPaymentMethods()
+  store.fetchPaymentAccounts()
   fetchImportConfig()
 })
 
@@ -153,6 +167,92 @@ async function handleDeleteType(type) {
     await store.deleteExpenseType(type.id)
   } catch (e) {
     alert(e.response?.data?.detail || 'Cannot delete this expense type.')
+  }
+}
+
+// Payment Method CRUD
+function openCreateMethod() {
+  editingMethodId.value = null
+  methodForm.value = { name: '', requires_account: false }
+  methodError.value = ''
+  showMethodForm.value = true
+}
+
+function openEditMethod(method) {
+  editingMethodId.value = method.id
+  methodForm.value = { name: method.name, requires_account: method.requires_account }
+  methodError.value = ''
+  showMethodForm.value = true
+}
+
+async function handleMethodSubmit() {
+  methodError.value = ''
+  try {
+    if (editingMethodId.value) {
+      await store.updatePaymentMethod(editingMethodId.value, methodForm.value)
+    } else {
+      await store.createPaymentMethod(methodForm.value)
+    }
+    showMethodForm.value = false
+  } catch (e) {
+    const data = e.response?.data
+    if (data && typeof data === 'object') {
+      methodError.value = Object.values(data).flat().join(' ')
+    } else {
+      methodError.value = 'Failed to save payment method.'
+    }
+  }
+}
+
+async function handleDeleteMethod(method) {
+  if (!confirm(`Delete payment method "${method.name}"?`)) return
+  try {
+    await store.deletePaymentMethod(method.id)
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Cannot delete this payment method.')
+  }
+}
+
+// Payment Account CRUD
+function openCreateAccount() {
+  editingAccountId.value = null
+  accountForm.value = { name: '', notes: '' }
+  accountError.value = ''
+  showAccountForm.value = true
+}
+
+function openEditAccount(account) {
+  editingAccountId.value = account.id
+  accountForm.value = { name: account.name, notes: account.notes || '' }
+  accountError.value = ''
+  showAccountForm.value = true
+}
+
+async function handleAccountSubmit() {
+  accountError.value = ''
+  try {
+    if (editingAccountId.value) {
+      await store.updatePaymentAccount(editingAccountId.value, accountForm.value)
+    } else {
+      await store.createPaymentAccount(accountForm.value)
+    }
+    showAccountForm.value = false
+  } catch (e) {
+    const data = e.response?.data
+    if (data && typeof data === 'object') {
+      accountError.value = Object.values(data).flat().join(' ')
+    } else {
+      accountError.value = 'Failed to save account.'
+    }
+  }
+}
+
+async function handleDeleteAccount(account) {
+  if (!confirm(`Delete account "${account.name}"?`)) return
+  try {
+    await store.deletePaymentAccount(account.id)
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Cannot delete this account.')
   }
 }
 
@@ -369,6 +469,74 @@ async function copyPrompt() {
       </div>
     </div>
 
+    <!-- Payment Methods -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <h3>Payment Methods</h3>
+        <button @click="openCreateMethod" class="btn btn-sm btn-primary">+ New Method</button>
+      </div>
+      <div class="card-body" style="padding:0">
+        <div v-if="!store.paymentMethods.length" class="empty-state">
+          <p>No payment methods configured yet. Add how bills get paid: cash, card, direct debit, etc.</p>
+        </div>
+        <table v-else>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Uses an account</th>
+              <th>Type</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in store.paymentMethods" :key="m.id">
+              <td style="font-weight:500">{{ m.name }}</td>
+              <td class="text-sm">{{ m.requires_account ? 'Yes' : 'No' }}</td>
+              <td>
+                <span class="text-sm text-muted">{{ m.is_default ? 'Default' : 'Custom' }}</span>
+              </td>
+              <td class="text-right">
+                <button @click="openEditMethod(m)" class="btn btn-sm btn-outline">Edit</button>
+                <button v-if="!m.is_default" @click="handleDeleteMethod(m)" class="btn btn-sm btn-outline" style="margin-left:0.25rem; color:var(--color-danger)">Delete</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Accounts -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <h3>Accounts</h3>
+        <button @click="openCreateAccount" class="btn btn-sm btn-primary">+ New Account</button>
+      </div>
+      <div class="card-body" style="padding:0">
+        <div v-if="!store.paymentAccounts.length" class="empty-state">
+          <p>No accounts configured yet. Add the bank accounts and cards that direct debits and card payments come from.</p>
+        </div>
+        <table v-else>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Notes</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="a in store.paymentAccounts" :key="a.id">
+              <td style="font-weight:500">{{ a.name }}</td>
+              <td class="text-sm text-muted">{{ a.notes || '—' }}</td>
+              <td class="text-right">
+                <button @click="openEditAccount(a)" class="btn btn-sm btn-outline">Edit</button>
+                <button @click="handleDeleteAccount(a)" class="btn btn-sm btn-outline" style="margin-left:0.25rem; color:var(--color-danger)">Delete</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Agent Import -->
     <div class="card mb-4">
       <div class="card-header">
@@ -488,6 +656,70 @@ async function copyPrompt() {
               <button type="button" class="btn btn-outline" @click="showSubjectForm = false">Cancel</button>
               <button type="submit" class="btn btn-primary">
                 {{ editingSubjectId ? 'Update' : 'Create' }}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Payment Method Form Modal -->
+    <div v-if="showMethodForm" class="modal-overlay" @click.self="showMethodForm = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>{{ editingMethodId ? 'Edit Payment Method' : 'New Payment Method' }}</h3>
+          <button @click="showMethodForm = false" class="btn btn-sm btn-outline">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div v-if="methodError" class="alert alert-danger">{{ methodError }}</div>
+          <form @submit.prevent="handleMethodSubmit">
+            <div class="form-group">
+              <label class="form-label">Name</label>
+              <input v-model="methodForm.name" type="text" class="form-input" placeholder="e.g. Cheque, PayPal" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label" style="display:flex; align-items:center; gap:0.5rem; cursor:pointer">
+                <input v-model="methodForm.requires_account" type="checkbox" />
+                Paid from a specific account
+              </label>
+              <p class="text-xs text-muted mt-1">
+                Tick for card, direct debit, and similar. Expenses using this method can then record which account they come from.
+              </p>
+            </div>
+            <div class="modal-footer" style="padding:0; border:none; margin-top:1rem">
+              <button type="button" class="btn btn-outline" @click="showMethodForm = false">Cancel</button>
+              <button type="submit" class="btn btn-primary">
+                {{ editingMethodId ? 'Update' : 'Create' }}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Account Form Modal -->
+    <div v-if="showAccountForm" class="modal-overlay" @click.self="showAccountForm = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>{{ editingAccountId ? 'Edit Account' : 'New Account' }}</h3>
+          <button @click="showAccountForm = false" class="btn btn-sm btn-outline">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div v-if="accountError" class="alert alert-danger">{{ accountError }}</div>
+          <form @submit.prevent="handleAccountSubmit">
+            <div class="form-group">
+              <label class="form-label">Name</label>
+              <input v-model="accountForm.name" type="text" class="form-input" placeholder="e.g. Joint current account, Amex" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Notes <span class="text-muted text-xs">(optional)</span></label>
+              <textarea v-model="accountForm.notes" class="form-textarea" placeholder="e.g. Bills account, topped up on the 1st"></textarea>
+              <p class="text-xs text-muted mt-1">Don't store account or card numbers here.</p>
+            </div>
+            <div class="modal-footer" style="padding:0; border:none; margin-top:1rem">
+              <button type="button" class="btn btn-outline" @click="showAccountForm = false">Cancel</button>
+              <button type="submit" class="btn btn-primary">
+                {{ editingAccountId ? 'Update' : 'Create' }}
               </button>
             </div>
           </form>

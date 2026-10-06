@@ -56,7 +56,10 @@ class DashboardUpcomingView(APIView):
         occurrences = Occurrence.objects.filter(
             due_date__gte=today, due_date__lte=thirty_days,
             status__in=['pending', 'overdue'],
-        ).select_related('expense', 'expense__subject').order_by('due_date')
+        ).select_related(
+            'expense', 'expense__subject', 'expense__payment_method',
+            'expense__account', 'expense__responsible',
+        ).order_by('due_date')
 
         data = []
         for occ in occurrences:
@@ -65,6 +68,13 @@ class DashboardUpcomingView(APIView):
                 'expense_name': occ.expense.name,
                 'expense_id': str(occ.expense.id),
                 'subject_name': occ.expense.subject.name if occ.expense.subject else None,
+                'payment_method_name': (
+                    occ.expense.payment_method.name if occ.expense.payment_method else None
+                ),
+                'account_name': occ.expense.account.name if occ.expense.account else None,
+                'responsible_name': (
+                    occ.expense.responsible.display_name if occ.expense.responsible else None
+                ),
                 'due_date': occ.due_date.isoformat(),
                 'expected_amount': str(occ.expected_amount),
                 'currency': occ.currency,
@@ -78,7 +88,10 @@ class DashboardOverdueView(APIView):
         today = timezone.now().date()
         occurrences = Occurrence.objects.filter(
             due_date__lt=today, status__in=['pending', 'overdue'],
-        ).select_related('expense', 'expense__subject').order_by('due_date')
+        ).select_related(
+            'expense', 'expense__subject', 'expense__payment_method',
+            'expense__account', 'expense__responsible',
+        ).order_by('due_date')
 
         data = []
         for occ in occurrences:
@@ -87,6 +100,13 @@ class DashboardOverdueView(APIView):
                 'expense_name': occ.expense.name,
                 'expense_id': str(occ.expense.id),
                 'subject_name': occ.expense.subject.name if occ.expense.subject else None,
+                'payment_method_name': (
+                    occ.expense.payment_method.name if occ.expense.payment_method else None
+                ),
+                'account_name': occ.expense.account.name if occ.expense.account else None,
+                'responsible_name': (
+                    occ.expense.responsible.display_name if occ.expense.responsible else None
+                ),
                 'due_date': occ.due_date.isoformat(),
                 'expected_amount': str(occ.expected_amount),
                 'currency': occ.currency,

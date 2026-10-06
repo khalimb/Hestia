@@ -36,6 +36,49 @@ class ExpenseType(models.Model):
         return self.name
 
 
+class PaymentMethod(models.Model):
+    """Global dictionary of how an expense is paid, e.g. Cash, Card, Direct Debit.
+
+    `requires_account` marks methods that draw from a specific account (card,
+    direct debit); for those an Expense may also name a PaymentAccount.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, unique=True)
+    requires_account = models.BooleanField(default=False)
+    is_default = models.BooleanField(default=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='payment_methods',
+    )
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class PaymentAccount(models.Model):
+    """Global dictionary of accounts money is paid from, e.g. a joint current account.
+
+    Named PaymentAccount (not Account) to avoid clashing with the `accounts`
+    user-auth app.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, unique=True)
+    notes = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='payment_accounts',
+    )
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class Expense(models.Model):
     RECURRENCE_CHOICES = [
         ('weekly', 'Weekly'),
@@ -60,6 +103,21 @@ class Expense(models.Model):
         null=True, blank=True,
     )
     recurrence_type = models.CharField(max_length=20, choices=RECURRENCE_CHOICES)
+    # How, from where, and by whom the expense is paid. All optional; `account`
+    # is only valid when `payment_method.requires_account` is set (enforced in
+    # the serializer so API errors are field-level).
+    payment_method = models.ForeignKey(
+        PaymentMethod, on_delete=models.PROTECT, related_name='expenses',
+        null=True, blank=True,
+    )
+    account = models.ForeignKey(
+        PaymentAccount, on_delete=models.PROTECT, related_name='expenses',
+        null=True, blank=True,
+    )
+    responsible = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='responsible_expenses',
+    )
     start_date = models.DateField()
     end_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)

@@ -20,3 +20,13 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'email', 'username', 'first_name', 'last_name', 'date_joined']
         read_only_fields = ['id', 'email', 'date_joined']
+
+
+class UserSummarySerializer(serializers.ModelSerializer):
+    """Minimal, read-only view of a family member for 'responsible' selects."""
+    display_name = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = ['id', 'first_name', 'last_name', 'email', 'display_name']
+        read_only_fields = fields

@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 
 from accounts.models import AgentImportConfig, IMPORT_TOKEN_PREFIX
-from expenses.models import Subject, ExpenseType, Expense
+from expenses.models import Subject, ExpenseType, PaymentMethod, PaymentAccount, Expense
 
 User = get_user_model()
 
@@ -145,3 +145,68 @@ class AgentImportTestCase(APITestCase):
         names = {s['name'] for s in resp.data['subjects']}
         self.assertIn('42 Oak Street', names)
         self.assertIn('monthly', resp.data['recurrence_types'])
+
+
+class AgentImportPaymentAttributesTests(AgentImportTestCase):
+    def setUp(self):
+        super().setUp()
+        self.direct_debit = PaymentMethod.objects.create(name='Direct Debit', requires_account=True)
+        self.cash = PaymentMethod.objects.create(name='Cash', requires_account=False)
+        self.joint = PaymentAccount.objects.create(name='Joint current')
+
+    def test_options_include_payment_methods_accounts_and_users(self):
+        token = self._mint_token()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        resp = self.client.get(reverse('agent-import-options'))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        methods = {m['name']: m for m in resp.data['payment_methods']}
+        self.assertTrue(methods['Direct Debit']['requires_account'])
+        self.assertFalse(methods['Cash']['requires_account'])
+        self.assertEqual([a['name'] for a in resp.data['accounts']], ['Joint current'])
+        users = resp.data['users']
+        self.assertEqual({u['display_name'] for u in users}, {'Owner', 'Other'})
+        # Ids + names only: no contact details leak to the agent.
+        self.assertEqual(set(users[0]), {'id', 'display_name'})
+
+    def test_prompt_lists_payment_methods_with_account_hint(self):
+        self._mint_token()
+        self.client.force_authenticate(self.user)
+        resp = self.client.get(reverse('agent-import-prompt'))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        prompt = resp.data['prompt']
+        self.assertIn(f'- Direct Debit (id: {self.direct_debit.id}, uses an account)', prompt)
+        self.assertIn(f'- Cash (id: {self.cash.id})', prompt)
+        self.assertNotIn(f'- Cash (id: {self.cash.id}, uses', prompt)
+        self.assertIn(f'- Joint current (id: {self.joint.id})', prompt)
+        self.assertIn(f'- Owner (id: {self.user.id})', prompt)
+        self.assertIn('"payment_method":', prompt)
+        self.assertNotIn('{{payment_methods}}', prompt)
+
+    def test_agent_submission_with_payment_attributes(self):
+        token = self._mint_token()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        payload = {
+            'name': 'Thames Water', 'amount': '42.50', 'currency': 'GBP',
+            'recurrence_type': 'monthly', 'start_date': '2026-07-01',
+            'payment_method': str(self.direct_debit.id),
+            'account': str(self.joint.id),
+            'responsible': str(self.other.id),
+        }
+        resp = self.client.post(reverse('agent-import-expense-create'), payload, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        expense = Expense.objects.get(id=resp.data['id'])
+        self.assertEqual(expense.payment_method, self.direct_debit)
+        self.assertEqual(expense.account, self.joint)
+        self.assertEqual(expense.responsible, self.other)
+
+    def test_agent_submission_account_rule_enforced(self):
+        token = self._mint_token()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        payload = {
+            'name': 'Window cleaner', 'amount': '20', 'currency': 'GBP',
+            'recurrence_type': 'monthly', 'start_date': '2026-07-01',
+            'payment_method': str(self.cash.id), 'account': str(self.joint.id),
+        }
+        resp = self.client.post(reverse('agent-import-expense-create'), payload, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('account', resp.data)

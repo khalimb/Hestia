@@ -5,10 +5,16 @@ import { useExpenseStore } from '../stores/expenses'
 const store = useExpenseStore()
 const filterSubject = ref('')
 const filterStatus = ref('')
+const filterMethod = ref('')
+const filterAccount = ref('')
+const filterResponsible = ref('')
 
 onMounted(() => {
   store.fetchExpenses()
   store.fetchSubjects()
+  store.fetchPaymentMethods()
+  store.fetchPaymentAccounts()
+  store.fetchUsers()
 })
 
 function formatCurrency(amount, currency) {
@@ -24,6 +30,9 @@ function applyFilters() {
   if (filterSubject.value) params.subject = filterSubject.value
   if (filterStatus.value === 'active') params.is_active = true
   if (filterStatus.value === 'inactive') params.is_active = false
+  if (filterMethod.value) params.payment_method = filterMethod.value
+  if (filterAccount.value) params.account = filterAccount.value
+  if (filterResponsible.value) params.responsible = filterResponsible.value
   store.fetchExpenses(params)
 }
 
@@ -86,6 +95,24 @@ async function handleDelete(expense) {
             <option value="inactive">Inactive</option>
           </select>
         </div>
+        <div class="form-group" style="margin:0; flex:1">
+          <select v-model="filterMethod" class="form-select" @change="applyFilters">
+            <option value="">All Payment Methods</option>
+            <option v-for="m in store.paymentMethods" :key="m.id" :value="m.id">{{ m.name }}</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0; flex:1">
+          <select v-model="filterAccount" class="form-select" @change="applyFilters">
+            <option value="">All Accounts</option>
+            <option v-for="a in store.paymentAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0; flex:1">
+          <select v-model="filterResponsible" class="form-select" @change="applyFilters">
+            <option value="">Anyone Responsible</option>
+            <option v-for="u in store.users" :key="u.id" :value="u.id">{{ u.display_name }}</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -107,6 +134,8 @@ async function handleDelete(expense) {
               <th>Type</th>
               <th class="text-right">Amount</th>
               <th>Recurrence</th>
+              <th>Paid By</th>
+              <th>Responsible</th>
               <th>Status</th>
               <th>Next Due</th>
               <th></th>
@@ -129,6 +158,15 @@ async function handleDelete(expense) {
               </td>
               <td class="text-right font-mono">{{ formatCurrency(expense.amount, expense.currency) }}</td>
               <td class="text-sm">{{ expense.recurrence_type }}</td>
+              <td>
+                <span v-if="expense.payment_method_name" class="text-sm">{{ expense.payment_method_name }}</span>
+                <span v-else class="text-xs text-muted">—</span>
+                <span v-if="expense.account_name" class="text-xs text-muted"> · {{ expense.account_name }}</span>
+              </td>
+              <td>
+                <span v-if="expense.responsible_name" class="text-sm">{{ expense.responsible_name }}</span>
+                <span v-else class="text-xs text-muted">—</span>
+              </td>
               <td>
                 <span :class="['badge', expense.is_active ? 'badge-paid' : 'badge-overdue']">
                   {{ expense.is_active ? 'Active' : 'Inactive' }}

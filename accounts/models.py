@@ -23,6 +23,12 @@ class User(AbstractUser):
     def __str__(self):
         return self.email
 
+    @property
+    def display_name(self):
+        """Human label for selects and read-only names: full name, else email."""
+        full = f"{self.first_name} {self.last_name}".strip()
+        return full or self.email
+
 
 class AgentImportConfig(models.Model):
     """Per-user configuration for the 'export a prompt to an agent' import flow.

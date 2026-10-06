@@ -22,6 +22,8 @@ async function markAsPaid(item) {
       amount_paid: item.expected_amount,
       currency: item.currency,
       paid_date: new Date().toISOString().split('T')[0],
+      // Prefill from the expense's configured method (see dashboard/views.py).
+      payment_method: item.payment_method_name || '',
     })
     await dashboard.fetchAll()
   } catch (e) {
@@ -70,6 +72,13 @@ function formatDueDate(dateStr) {
   if (days < 0) return `${Math.abs(days)} days overdue`
   if (days <= 7) return `In ${days} days`
   return format(date, 'dd MMM yyyy')
+}
+
+// Secondary line under an item: "Subject · Direct Debit · V A" (non-empty parts only).
+function metaLine(item) {
+  return [item.subject_name, item.payment_method_name, item.responsible_name]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 function dueDateClass(item) {
@@ -147,7 +156,7 @@ function dueDateClass(item) {
                     <RouterLink :to="`/occurrences/${item.id}`" style="text-decoration:none; color:inherit;">
                       <strong>{{ item.expense_name }}</strong>
                       <br />
-                      <span v-if="item.subject_name" class="text-xs text-muted">{{ item.subject_name }}</span>
+                      <span v-if="metaLine(item)" class="text-xs text-muted">{{ metaLine(item) }}</span>
                     </RouterLink>
                   </td>
                   <td class="text-right">
@@ -182,6 +191,7 @@ function dueDateClass(item) {
               <tr>
                 <th>Expense</th>
                 <th>Subject</th>
+                <th>Paid By</th>
                 <th class="text-right">Amount</th>
                 <th class="text-right">Due Date</th>
                 <th class="text-right">Days Overdue</th>
@@ -198,6 +208,11 @@ function dueDateClass(item) {
                 <td>
                   <span v-if="item.subject_name" class="text-sm">{{ item.subject_name }}</span>
                   <span v-else class="text-xs text-muted">—</span>
+                </td>
+                <td>
+                  <span v-if="item.payment_method_name" class="text-sm">{{ item.payment_method_name }}</span>
+                  <span v-else class="text-xs text-muted">—</span>
+                  <span v-if="item.responsible_name" class="text-xs text-muted"> · {{ item.responsible_name }}</span>
                 </td>
                 <td class="text-right font-mono">{{ formatCurrency(item.expected_amount, item.currency) }}</td>
                 <td class="text-right">{{ format(parseISO(item.due_date), 'dd MMM yyyy') }}</td>

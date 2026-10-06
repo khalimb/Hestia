@@ -5,6 +5,8 @@ from . import views
 router = DefaultRouter()
 router.register(r'subjects', views.SubjectViewSet)
 router.register(r'expense-types', views.ExpenseTypeViewSet)
+router.register(r'payment-methods', views.PaymentMethodViewSet)
+router.register(r'payment-accounts', views.PaymentAccountViewSet)
 router.register(r'expenses', views.ExpenseViewSet)
 router.register(r'occurrences', views.OccurrenceViewSet)
 

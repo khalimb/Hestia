@@ -2,7 +2,7 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
-from .serializers import RegisterSerializer, UserSerializer
+from .serializers import RegisterSerializer, UserSerializer, UserSummarySerializer
 
 User = get_user_model()
 
@@ -43,3 +43,14 @@ class LogoutView(generics.GenericAPIView):
             return Response(status=status.HTTP_205_RESET_CONTENT)
         except Exception:
             return Response(status=status.HTTP_400_BAD_REQUEST)
+
+
+class UserListView(generics.ListAPIView):
+    """All family members, for the 'responsible for paying' select.
+
+    Hestia is single-household, so every authenticated user may see the list.
+    Unpaginated: it is a lookup list, not a browsing surface.
+    """
+    serializer_class = UserSummarySerializer
+    pagination_class = None
+    queryset = User.objects.filter(is_active=True).order_by('first_name', 'last_name', 'email')
