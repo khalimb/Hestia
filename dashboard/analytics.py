@@ -49,8 +49,10 @@ def _bucket(store, currency, months):
     return store[currency]
 
 
-def _add(group, key, field, amount):
-    row = group.setdefault(key, {'name': key, 'recurring': ZERO, 'one_off': ZERO})
+def _add(group, key, name, field, amount):
+    """`key` is the dictionary id (or None for unassigned); `name` is for display."""
+    row = group.setdefault(key, {'id': str(key) if key else None, 'name': name,
+                                 'recurring': ZERO, 'one_off': ZERO})
     row[field] += _q(amount)
 
 
@@ -72,11 +74,13 @@ def spend_summary(date_from, date_to, normalise_to=None):
     for row in (Payment.objects.filter(occurrence__in=occurrences)
                 .values('occurrence__currency').annotate(total=Sum('amount_paid'))):
         _bucket(store, row['occurrence__currency'], months)['recurring_paid'] += _q(row['total'])
-    for row in occurrences.values('currency', 'expense__expense_type__name').annotate(total=Sum('expected_amount')):
-        _add(_bucket(store, row['currency'], months)['by_category'],
+    for row in (occurrences.values('currency', 'expense__expense_type_id', 'expense__expense_type__name')
+                .annotate(total=Sum('expected_amount'))):
+        _add(_bucket(store, row['currency'], months)['by_category'], row['expense__expense_type_id'],
              row['expense__expense_type__name'] or UNCATEGORISED, 'recurring', row['total'])
-    for row in occurrences.values('currency', 'expense__subject__name').annotate(total=Sum('expected_amount')):
-        _add(_bucket(store, row['currency'], months)['by_subject'],
+    for row in (occurrences.values('currency', 'expense__subject_id', 'expense__subject__name')
+                .annotate(total=Sum('expected_amount'))):
+        _add(_bucket(store, row['currency'], months)['by_subject'], row['expense__subject_id'],
              row['expense__subject__name'] or NO_SUBJECT, 'recurring', row['total'])
     for row in (occurrences.annotate(m=TruncMonth('due_date'))
                 .values('currency', 'm').annotate(total=Sum('expected_amount'))):
@@ -88,11 +92,13 @@ def spend_summary(date_from, date_to, normalise_to=None):
         b = _bucket(store, row['currency'], months)
         b['one_off'] += _q(row['total'])
         b['one_off_count'] += row['count']
-    for row in transactions.values('currency', 'expense_type__name').annotate(total=Sum('amount')):
-        _add(_bucket(store, row['currency'], months)['by_category'],
+    for row in (transactions.values('currency', 'expense_type_id', 'expense_type__name')
+                .annotate(total=Sum('amount'))):
+        _add(_bucket(store, row['currency'], months)['by_category'], row['expense_type_id'],
              row['expense_type__name'] or UNCATEGORISED, 'one_off', row['total'])
-    for row in transactions.values('currency', 'subject__name').annotate(total=Sum('amount')):
-        _add(_bucket(store, row['currency'], months)['by_subject'],
+    for row in (transactions.values('currency', 'subject_id', 'subject__name')
+                .annotate(total=Sum('amount'))):
+        _add(_bucket(store, row['currency'], months)['by_subject'], row['subject_id'],
              row['subject__name'] or NO_SUBJECT, 'one_off', row['total'])
     for row in (transactions.annotate(m=TruncMonth('date'))
                 .values('currency', 'm').annotate(total=Sum('amount'))):
@@ -117,8 +123,8 @@ def spend_summary(date_from, date_to, normalise_to=None):
             merged['one_off_count'] += b['one_off_count']
             for group in ('by_category', 'by_subject'):
                 for key, row in b[group].items():
-                    _add(merged[group], key, 'recurring', row['recurring'] * rate)
-                    _add(merged[group], key, 'one_off', row['one_off'] * rate)
+                    _add(merged[group], key, row['name'], 'recurring', row['recurring'] * rate)
+                    _add(merged[group], key, row['name'], 'one_off', row['one_off'] * rate)
             for key, row in b['by_month'].items():
                 merged['by_month'][key]['recurring'] += _q(row['recurring'] * rate)
                 merged['by_month'][key]['one_off'] += _q(row['one_off'] * rate)
@@ -167,3 +173,81 @@ def parse_window(date_from, date_to):
     except ValueError:
         raise ValueError('dates must be YYYY-MM-DD')
     return start, end
+
+
+GROUPS = {
+    # group -> (occurrence filter field, transaction filter field)
+    'category': ('expense__expense_type', 'expense_type'),
+    'subject': ('expense__subject', 'subject'),
+}
+
+
+def breakdown_items(date_from, date_to, group, group_id, currency=None, normalise_to=None):
+    """Every item behind one by_category / by_subject figure: occurrences due
+    in the window and transactions dated in it. `group` is 'category' or
+    'subject'; `group_id` the dictionary id, or None for unassigned.
+    `currency` narrows to one currency; with `normalise_to='USD'` each item
+    also carries `amount_usd`."""
+    if group not in GROUPS:
+        raise ValueError(f"group must be one of {list(GROUPS)}")
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+    occ_field, tx_field = GROUPS[group]
+    occurrences = (Occurrence.objects.filter(due_date__gte=date_from, due_date__lte=date_to)
+                   .select_related('expense', 'expense__subject', 'expense__payment_method'))
+    transactions = (Transaction.objects.filter(date__gte=date_from, date__lte=date_to)
+                    .select_related('subject', 'payment_method', 'paid_by'))
+    if group_id is None:
+        occurrences = occurrences.filter(**{f'{occ_field}__isnull': True})
+        transactions = transactions.filter(**{f'{tx_field}__isnull': True})
+    else:
+        occurrences = occurrences.filter(**{f'{occ_field}_id': group_id})
+        transactions = transactions.filter(**{f'{tx_field}_id': group_id})
+    if currency:
+        occurrences = occurrences.filter(currency=currency)
+        transactions = transactions.filter(currency=currency)
+
+    paid = {}
+    for row in (Payment.objects.filter(occurrence__in=occurrences)
+                .values('occurrence_id').annotate(total=Sum('amount_paid'))):
+        paid[row['occurrence_id']] = _q(row['total'])
+
+    items = []
+    for occ in occurrences:
+        items.append({
+            'kind': 'recurring', 'id': str(occ.id), 'date': occ.due_date.isoformat(),
+            'name': occ.expense.name, 'expense_id': str(occ.expense_id),
+            'subject': occ.expense.subject.name if occ.expense.subject else None,
+            'amount': _q(occ.expected_amount), 'currency': occ.currency,
+            'status': occ.status, 'paid': paid.get(occ.id, ZERO),
+            'payment_method': occ.expense.payment_method.name if occ.expense.payment_method else None,
+        })
+    for t in transactions:
+        items.append({
+            'kind': 'one_off', 'id': str(t.id), 'date': t.date.isoformat(),
+            'name': t.merchant, 'subject': t.subject.name if t.subject else None,
+            'amount': _q(t.amount), 'currency': t.currency, 'notes': t.notes,
+            'paid_by': t.paid_by.display_name if t.paid_by else None,
+            'payment_method': t.payment_method.name if t.payment_method else None,
+        })
+    items.sort(key=lambda i: (i['date'], i['kind']), reverse=True)
+
+    totals = {}
+    for item in items:
+        totals[item['currency']] = totals.get(item['currency'], ZERO) + item['amount']
+    result = {
+        'period': {'date_from': date_from.isoformat(), 'date_to': date_to.isoformat()},
+        'group': group, 'group_id': str(group_id) if group_id else None,
+        'count': len(items), 'totals': totals, 'items': items,
+    }
+    if normalise_to == 'USD' and items:
+        rates, unconverted, rate_date, _sources = rates_to_usd(list(totals), date_to)
+        total_usd = ZERO
+        for item in items:
+            rate = rates.get(item['currency'])
+            item['amount_usd'] = _q(item['amount'] * rate) if rate is not None else None
+            if rate is not None:
+                total_usd += item['amount_usd']
+        result['total_usd'] = total_usd
+        result['unconverted'] = unconverted
+    return result

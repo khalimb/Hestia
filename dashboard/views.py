@@ -1,4 +1,5 @@
 from datetime import timedelta
+from django.core.exceptions import ValidationError
 from django.db.models import Sum, Count
 from django.utils import timezone
 from rest_framework.response import Response
@@ -6,7 +7,7 @@ from rest_framework.views import APIView
 from expenses.models import Subject, ExpenseType, Expense, Occurrence
 from expenses.services import ensure_occurrences_generated
 from transactions.models import Transaction
-from .analytics import spend_summary, parse_window
+from .analytics import spend_summary, breakdown_items, parse_window, GROUPS
 
 
 class DashboardSummaryView(APIView):
@@ -213,3 +214,34 @@ class DashboardAnalyticsView(APIView):
         if normalise not in (None, 'USD'):
             return Response({'detail': 'normalise supports USD only'}, status=400)
         return Response(spend_summary(start, end, normalise_to=normalise))
+
+
+class DashboardBreakdownItemsView(APIView):
+    """Drill-down for one by_category / by_subject cell of the analytics: the
+    occurrences and transactions behind it. group = category | subject;
+    id = the dictionary id, or "none" for unassigned."""
+
+    def get(self, request):
+        try:
+            start, end = parse_window(request.query_params.get('date_from'),
+                                      request.query_params.get('date_to'))
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=400)
+        group = request.query_params.get('group', '').strip().lower()
+        if group not in GROUPS:
+            return Response({'detail': f'group must be one of {list(GROUPS)}'}, status=400)
+        raw = request.query_params.get('id', '').strip()
+        if not raw:
+            return Response({'detail': 'id is required (a dictionary id or "none")'}, status=400)
+        group_id = None if raw.lower() == 'none' else raw
+        model = ExpenseType if group == 'category' else Subject
+        if group_id is not None:
+            try:
+                exists = model.objects.filter(pk=group_id).exists()
+            except (ValueError, ValidationError):
+                exists = False
+            if not exists:
+                return Response({'detail': f'unknown {group} id'}, status=404)
+        currency = request.query_params.get('currency', '').upper() or None
+        normalise = request.query_params.get('normalise', '').upper() or None
+        return Response(breakdown_items(start, end, group, group_id, currency, normalise_to=normalise))

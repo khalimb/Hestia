@@ -12,7 +12,7 @@ from core.models import FxRate
 from expenses.models import ExpenseType, Subject, Expense, Occurrence
 from payments.models import Payment
 from transactions.models import Transaction
-from .analytics import spend_summary
+from .analytics import spend_summary, breakdown_items
 
 User = get_user_model()
 
@@ -175,3 +175,80 @@ class NormalisationTests(APITestCase):
                                   content_type='application/json').json()['result']
         self.assertFalse(result['isError'], result)
         self.assertEqual(json.loads(result['content'][0]['text'])['normalised']['total'], '1268.00')
+
+
+class BreakdownItemsTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='bk@example.com', username='bk', first_name='B', password='supersecret123')
+        self.takeaway = ExpenseType.objects.create(name='Takeaway')
+        self.rent = ExpenseType.objects.create(name='Rent')
+        self.flat = Subject.objects.create(name='Flat')
+        expense = Expense.objects.create(name='Flat rent', amount='1000.00', currency='GBP', recurrence_type='monthly',
+                                         start_date=date(2026, 9, 1), expense_type=self.rent, subject=self.flat,
+                                         created_by=self.user)
+        self.occ = Occurrence.objects.create(expense=expense, due_date=date(2026, 9, 1),
+                                             expected_amount='1000.00', currency='GBP')
+        Payment.objects.create(occurrence=self.occ, amount_paid='400.00', currency='GBP',
+                               paid_date=date(2026, 9, 2), logged_by=self.user)
+        Occurrence.objects.create(expense=expense, due_date=date(2026, 10, 1), expected_amount='1000.00', currency='GBP')
+        Transaction.objects.create(date=date(2026, 9, 3), amount='23.40', currency='GBP', merchant='Deliveroo',
+                                   expense_type=self.takeaway, subject=self.flat, created_by=self.user)
+        Transaction.objects.create(date=date(2026, 9, 9), amount='12.00', currency='EUR', merchant='Tapas',
+                                   expense_type=self.takeaway, created_by=self.user)
+        Transaction.objects.create(date=date(2026, 9, 5), amount='5.00', currency='GBP', merchant='Coffee',
+                                   created_by=self.user)
+        FxRate.objects.create(date=date(2026, 9, 30), currency='GBP', rate_to_usd='1.25')
+        FxRate.objects.create(date=date(2026, 9, 30), currency='EUR', rate_to_usd='1.10')
+
+    def test_breakdown_rows_carry_ids(self):
+        gbp = {c['currency']: c for c in spend_summary(date(2026, 9, 1), date(2026, 9, 30))['currencies']}['GBP']
+        cats = {c['name']: c for c in gbp['by_category']}
+        self.assertEqual(cats['Rent']['id'], str(self.rent.id))
+        self.assertIsNone(cats['Uncategorised']['id'])
+        subjects = {s['name']: s for s in gbp['by_subject']}
+        self.assertEqual(subjects['Flat']['id'], str(self.flat.id))
+
+    def test_category_items_mix_both_kinds_window_and_currency(self):
+        data = breakdown_items(date(2026, 9, 1), date(2026, 9, 30), 'category', self.takeaway.id)
+        self.assertEqual([(i['kind'], i['name']) for i in data['items']],
+                         [('one_off', 'Tapas'), ('one_off', 'Deliveroo')])           # newest first
+        self.assertEqual({k: str(v) for k, v in data['totals'].items()}, {'EUR': '12.00', 'GBP': '23.40'})
+        data = breakdown_items(date(2026, 9, 1), date(2026, 9, 30), 'category', self.takeaway.id, currency='GBP')
+        self.assertEqual([i['name'] for i in data['items']], ['Deliveroo'])
+
+        data = breakdown_items(date(2026, 9, 1), date(2026, 9, 30), 'category', self.rent.id)
+        self.assertEqual(data['count'], 1)                                           # October occurrence excluded
+        occ = data['items'][0]
+        self.assertEqual((occ['kind'], occ['status'], str(occ['paid']), occ['expense_id']),
+                         ('recurring', 'pending', '400.00', str(self.occ.expense_id)))
+
+        data = breakdown_items(date(2026, 9, 1), date(2026, 9, 30), 'category', None)
+        self.assertEqual([i['name'] for i in data['items']], ['Coffee'])
+
+    def test_subject_items_and_usd_column(self):
+        data = breakdown_items(date(2026, 9, 1), date(2026, 9, 30), 'subject', self.flat.id, normalise_to='USD')
+        self.assertEqual([(i['kind'], i['name']) for i in data['items']],
+                         [('one_off', 'Deliveroo'), ('recurring', 'Flat rent')])
+        self.assertEqual(str(data['items'][1]['amount_usd']), '1250.00')
+        self.assertEqual(str(data['total_usd']), '1279.25')
+        self.assertEqual(data['unconverted'], [])
+        with self.assertRaises(ValueError):
+            breakdown_items(date(2026, 9, 1), date(2026, 9, 30), 'bogus', None)
+
+    def test_endpoint(self):
+        self.client.force_authenticate(self.user)
+        base = {'date_from': '2026-09-01', 'date_to': '2026-09-30'}
+        resp = self.client.get(reverse('dashboard-analytics-items'), {**base, 'group': 'subject', 'id': str(self.flat.id)})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.json()['count'], 2)
+        resp = self.client.get(reverse('dashboard-analytics-items'), {**base, 'group': 'category', 'id': 'none'})
+        self.assertEqual([i['name'] for i in resp.json()['items']], ['Coffee'])
+        for params in ({**base, 'group': 'category'},
+                       {**base, 'group': 'bogus', 'id': 'none'}):
+            self.assertEqual(self.client.get(reverse('dashboard-analytics-items'), params).status_code, 400, params)
+        resp = self.client.get(reverse('dashboard-analytics-items'),
+                               {**base, 'group': 'category', 'id': '00000000-0000-0000-0000-000000000000'})
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        resp = self.client.get(reverse('dashboard-analytics-items'), {**base, 'group': 'category', 'id': 'not-a-uuid'})
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)

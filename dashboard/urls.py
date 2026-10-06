@@ -7,4 +7,5 @@ urlpatterns = [
     path('overdue/', views.DashboardOverdueView.as_view(), name='dashboard-overdue'),
     path('coverage/', views.DashboardCoverageView.as_view(), name='dashboard-coverage'),
     path('analytics/', views.DashboardAnalyticsView.as_view(), name='dashboard-analytics'),
+    path('analytics/items/', views.DashboardBreakdownItemsView.as_view(), name='dashboard-analytics-items'),
 ]

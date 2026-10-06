@@ -130,6 +130,45 @@ const chartOptions = {
   scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
 }
 
+// --- drill-down: the items behind one category / subject row ----------------
+const drill = ref(null)        // { group, name } while open
+const drillData = ref(null)
+const drillLoading = ref(false)
+const drillError = ref('')
+
+async function openDrill(group, row) {
+  drill.value = { group, name: row.name }
+  drillData.value = null
+  drillError.value = ''
+  drillLoading.value = true
+  try {
+    const params = { ...range.value, group, id: row.id || 'none' }
+    if (view.value === 'USD*') params.normalise = 'USD'
+    else params.currency = view.value
+    const { data: payload } = await api.get('dashboard/analytics/items/', { params })
+    drillData.value = payload
+  } catch (e) {
+    drillError.value = e.response?.data?.detail || 'Failed to load items.'
+  } finally {
+    drillLoading.value = false
+  }
+}
+
+function closeDrill() {
+  drill.value = null
+  drillData.value = null
+}
+
+const drillTitle = computed(() => {
+  if (!drill.value) return ''
+  return `${drill.value.group === 'category' ? 'Category' : 'Subject'}: ${drill.value.name} · ${periodLabel.value}`
+})
+
+function itemDate(iso) {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
 function paidShareOf(bucket) {
   if (!bucket || parseFloat(bucket.recurring_expected) === 0) return null
   return (parseFloat(bucket.recurring_paid) / parseFloat(bucket.recurring_expected)) * 100
@@ -301,15 +340,15 @@ const ratesLine = computed(() => {
       <div v-if="current" class="grid-2" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:1rem">
         <!-- By category -->
         <div class="card">
-          <div class="card-header"><h3>By category</h3></div>
+          <div class="card-header"><h3>By category</h3><span class="text-xs text-muted">click a row for its items</span></div>
           <div class="card-body" style="padding:0">
             <table>
               <thead>
                 <tr><th>Category</th><th class="text-right">Recurring</th><th class="text-right">One-off</th><th class="text-right">Total</th><th class="text-right">Share</th></tr>
               </thead>
               <tbody>
-                <tr v-for="row in current.by_category" :key="row.name">
-                  <td style="font-weight:500">{{ row.name }}</td>
+                <tr v-for="row in current.by_category" :key="row.id || 'none'" style="cursor:pointer" title="Show the items behind this figure" @click="openDrill('category', row)">
+                  <td style="font-weight:500; color:var(--color-primary)">{{ row.name }}</td>
                   <td class="text-right font-mono text-sm">{{ parseFloat(row.recurring) ? money(row.recurring) : '—' }}</td>
                   <td class="text-right font-mono text-sm">{{ parseFloat(row.one_off) ? money(row.one_off) : '—' }}</td>
                   <td class="text-right font-mono">{{ money(row.total) }}</td>
@@ -322,15 +361,15 @@ const ratesLine = computed(() => {
 
         <!-- By subject -->
         <div class="card">
-          <div class="card-header"><h3>By subject</h3></div>
+          <div class="card-header"><h3>By subject</h3><span class="text-xs text-muted">click a row for its items</span></div>
           <div class="card-body" style="padding:0">
             <table>
               <thead>
                 <tr><th>Subject</th><th class="text-right">Recurring</th><th class="text-right">One-off</th><th class="text-right">Total</th><th class="text-right">Share</th></tr>
               </thead>
               <tbody>
-                <tr v-for="row in current.by_subject" :key="row.name">
-                  <td style="font-weight:500">{{ row.name }}</td>
+                <tr v-for="row in current.by_subject" :key="row.id || 'none'" style="cursor:pointer" title="Show the items behind this figure" @click="openDrill('subject', row)">
+                  <td style="font-weight:500; color:var(--color-primary)">{{ row.name }}</td>
                   <td class="text-right font-mono text-sm">{{ parseFloat(row.recurring) ? money(row.recurring) : '—' }}</td>
                   <td class="text-right font-mono text-sm">{{ parseFloat(row.one_off) ? money(row.one_off) : '—' }}</td>
                   <td class="text-right font-mono">{{ money(row.total) }}</td>
@@ -360,5 +399,71 @@ const ratesLine = computed(() => {
         </div>
       </div>
     </template>
+
+    <!-- Drill-down modal -->
+    <div v-if="drill" class="modal-overlay" @click.self="closeDrill">
+      <div class="modal" style="max-width:900px; width:95%">
+        <div class="modal-header">
+          <div>
+            <h3>{{ drillTitle }}</h3>
+            <p class="text-xs text-muted">
+              {{ view === 'USD*' ? 'All currencies, with USD at the period rates' : view + ' only' }}
+              · recurring bills due in the period and one-off transactions dated in it
+            </p>
+          </div>
+          <button @click="closeDrill" class="btn btn-sm btn-outline">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height:70vh; overflow:auto; padding:0">
+          <div v-if="drillLoading" class="loading-spinner">Loading...</div>
+          <div v-else-if="drillError" class="alert alert-danger" style="margin:1rem">{{ drillError }}</div>
+          <div v-else-if="drillData && !drillData.items.length" class="empty-state"><p>No items.</p></div>
+          <table v-else-if="drillData">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Kind</th>
+                <th>Item</th>
+                <th class="text-right">Amount</th>
+                <th v-if="view === 'USD*'" class="text-right">USD</th>
+                <th>Status / who</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in drillData.items" :key="item.kind + item.id">
+                <td class="text-sm" style="white-space:nowrap">{{ itemDate(item.date) }}</td>
+                <td><span :class="['badge', item.kind === 'recurring' ? 'badge-pending' : 'badge-paid']">{{ item.kind === 'recurring' ? 'Recurring' : 'One-off' }}</span></td>
+                <td>
+                  <RouterLink v-if="item.kind === 'recurring'" :to="`/expenses/${item.expense_id}`" style="color:var(--color-primary); text-decoration:none; font-weight:500">{{ item.name }}</RouterLink>
+                  <RouterLink v-else to="/transactions" style="color:var(--color-primary); text-decoration:none; font-weight:500">{{ item.name }}</RouterLink>
+                  <p class="text-xs text-muted">
+                    <span v-if="item.subject">{{ item.subject }}</span>
+                    <span v-if="item.subject && item.payment_method"> · </span>
+                    <span v-if="item.payment_method">{{ item.payment_method }}</span>
+                    <span v-if="item.notes"> · {{ item.notes }}</span>
+                  </p>
+                </td>
+                <td class="text-right font-mono">{{ money(item.amount, item.currency) }}</td>
+                <td v-if="view === 'USD*'" class="text-right font-mono text-sm">{{ item.amount_usd != null ? money(item.amount_usd, 'USD') : '—' }}</td>
+                <td class="text-sm">
+                  <template v-if="item.kind === 'recurring'">
+                    <span :class="['badge', 'badge-' + item.status]">{{ item.status }}</span>
+                    <span v-if="parseFloat(item.paid) > 0" class="text-xs text-muted"> {{ money(item.paid, item.currency) }} paid</span>
+                  </template>
+                  <template v-else>{{ item.paid_by || '—' }}</template>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-if="drillData && drillData.items.length" class="modal-footer" style="justify-content:space-between; flex-wrap:wrap; gap:0.5rem">
+          <span class="text-sm text-muted">{{ drillData.count }} item{{ drillData.count === 1 ? '' : 's' }}</span>
+          <span class="text-sm font-mono">
+            <span v-for="(total, cur) in drillData.totals" :key="cur" style="margin-left:0.75rem">{{ money(total, cur) }}</span>
+            <span v-if="drillData.total_usd != null" style="margin-left:0.75rem; font-weight:600">= {{ money(drillData.total_usd, 'USD') }}</span>
+            <span v-if="drillData.unconverted && drillData.unconverted.length" class="text-xs" style="color:var(--color-danger); margin-left:0.5rem">({{ drillData.unconverted.join(', ') }} not converted)</span>
+          </span>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
