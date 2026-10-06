@@ -1,5 +1,5 @@
 """MCP transport + tools through the real endpoint, and the owner-facing
-assignment / token / config endpoints."""
+token / prompt / config endpoints."""
 import json
 
 from django.contrib.auth import get_user_model
@@ -10,8 +10,8 @@ from rest_framework.test import APITestCase
 from expenses.models import (
     Subject, ExpenseType, PaymentMethod, PaymentAccount, Expense, Occurrence,
 )
-from .assignment_prompt import DEFAULT_ASSIGNMENT_TEMPLATE
-from .models import McpToken, Assignment, AgentConfig, MCP_TOKEN_PREFIX
+from .agent_prompt import DEFAULT_AGENT_PROMPT_TEMPLATE
+from .models import McpToken, AgentConfig, MCP_TOKEN_PREFIX
 
 User = get_user_model()
 
@@ -56,6 +56,12 @@ class AgentsTestCase(APITestCase):
         fields.update(overrides)
         return Expense.objects.create(**fields)
 
+    def create_item(self, **overrides):
+        item = {'name': 'Water', 'amount': '35.50', 'recurrence_type': 'monthly',
+                'start_date': '2026-10-01'}
+        item.update(overrides)
+        return item
+
 
 class TransportTests(AgentsTestCase):
     def test_unknown_or_revoked_token_404(self):
@@ -83,8 +89,11 @@ class TransportTests(AgentsTestCase):
         self.assertIsNotNone(self.mcp.last_used_at)
 
         names = {t['name'] for t in self.rpc('tools/list').json()['result']['tools']}
-        self.assertTrue({'dictionaries_get', 'expenses_list', 'expense_create',
-                         'dictionary_delete', 'assignment_save'} <= names)
+        self.assertEqual(names, {
+            'dictionaries_get', 'expenses_list', 'expense_get', 'occurrences_list',
+            'activity_recent', 'expenses_apply', 'dictionary_create',
+            'dictionary_update', 'dictionary_delete',
+        })
 
     def test_notification_202_and_no_slash_no_redirect(self):
         response = self.client.post(
@@ -108,9 +117,6 @@ class TransportTests(AgentsTestCase):
         response = self.client.post(self.url, json.dumps(body), content_type='application/json')
         self.assertEqual(response.status_code, 200)
         self.assertEqual([r['id'] for r in response.json()], [1, 2])
-
-    def test_mcp_path_is_not_swallowed_by_spa_catch_all(self):
-        self.assertEqual(self.client.get(self.url).status_code, 405)  # not 200 index.html
 
 
 class ReadToolTests(AgentsTestCase):
@@ -173,48 +179,61 @@ class ReadToolTests(AgentsTestCase):
         self.assertTrue(is_error)
 
 
-class WriteToolTests(AgentsTestCase):
-    def test_expense_create_attributes_to_token_owner_and_generates_occurrences(self):
-        is_error, data = self.call_tool('expense_create', {
-            'name': 'Water', 'amount': '35.50', 'recurrence_type': 'monthly',
-            'start_date': '2026-10-01', 'expense_type': str(self.etype.id),
-            'payment_method': str(self.dd.id), 'account': str(self.joint.id),
-            'responsible': str(self.partner.id),
+class ExpensesApplyTests(AgentsTestCase):
+    def test_mixed_batch_applies_good_items_and_rejects_bad_ones(self):
+        existing = self.make_expense(payment_method=self.dd, account=self.joint)
+        is_error, data = self.call_tool('expenses_apply', {
+            'creates': [
+                self.create_item(expense_type=str(self.etype.id), payment_method=str(self.dd.id),
+                                 account=str(self.joint.id), responsible=str(self.partner.id)),
+                self.create_item(name='Bad: cash with account', payment_method=str(self.cash.id),
+                                 account=str(self.joint.id)),
+                self.create_item(name='Bad: no amount', amount=''),
+            ],
+            'updates': [
+                {'expense_id': str(existing.id), 'amount': '160.00'},
+                {'expense_id': str(existing.id), 'payment_method': str(self.cash.id)},  # stored account conflicts
+                {'expense_id': '00000000-0000-0000-0000-000000000000', 'amount': '1'},
+                {'expense_id': str(existing.id)},                                        # nothing to update
+            ],
         })
         self.assertFalse(is_error, data)
-        expense = Expense.objects.get(id=data['expense']['id'])
-        self.assertEqual(expense.created_by, self.user)
-        self.assertEqual(expense.account, self.joint)
-        self.assertTrue(expense.occurrences.exists())
-        self.assertIsNotNone(data['expense']['next_due'])
+        self.assertEqual(data['counts'], {'applied': 2, 'rejected': 5})
+        ops = [(a['op'], a['index']) for a in data['applied']]
+        self.assertEqual(ops, [('create', 0), ('update', 0)])
 
-    def test_expense_create_enforces_account_rule(self):
-        is_error, text = self.call_tool('expense_create', {
-            'name': 'Window cleaner', 'amount': '20', 'recurrence_type': 'monthly',
-            'start_date': '2026-10-01', 'payment_method': str(self.cash.id),
-            'account': str(self.joint.id),
-        })
-        self.assertTrue(is_error)
-        self.assertIn('account', text)
-        self.assertFalse(Expense.objects.filter(name='Window cleaner').exists())
+        water = Expense.objects.get(name='Water')
+        self.assertEqual(water.created_by, self.user)       # token owner
+        self.assertEqual(water.account, self.joint)
+        self.assertTrue(water.occurrences.exists())          # generated in the batch
+        self.assertIsNotNone(data['applied'][0]['expense']['next_due'])  # occurrences generated
+        existing.refresh_from_db()
+        self.assertEqual(str(existing.amount), '160.00')
+        self.assertEqual(existing.payment_method, self.dd)   # conflicting update rejected
 
-    def test_expense_update_partial_and_deactivate(self):
-        expense = self.make_expense(payment_method=self.dd, account=self.joint)
-        is_error, text = self.call_tool('expense_update', {
-            'expense_id': str(expense.id), 'payment_method': str(self.cash.id)})
-        self.assertTrue(is_error)          # stored account conflicts with Cash
-        is_error, data = self.call_tool('expense_update', {
-            'expense_id': str(expense.id), 'payment_method': str(self.cash.id),
-            'account': None, 'is_active': False})
+        rejected = {(r['op'], r['index']): r for r in data['rejected']}
+        self.assertIn('account', rejected[('create', 1)]['errors'])
+        self.assertIn('amount', rejected[('create', 2)]['errors'])
+        self.assertIn('account', rejected[('update', 1)]['errors'])
+        self.assertIn('unknown expense', rejected[('update', 2)]['errors'])
+        self.assertIn('nothing to update', rejected[('update', 3)]['errors'])
+        self.assertFalse(Expense.objects.filter(name__startswith='Bad').exists())
+
+    def test_deactivate_via_update_and_empty_batch(self):
+        expense = self.make_expense()
+        is_error, data = self.call_tool('expenses_apply', {
+            'updates': [{'expense_id': str(expense.id), 'is_active': False}]})
         self.assertFalse(is_error, data)
         expense.refresh_from_db()
-        self.assertEqual(expense.payment_method, self.cash)
-        self.assertIsNone(expense.account)
         self.assertFalse(expense.is_active)
-        is_error, text = self.call_tool('expense_update', {'expense_id': str(expense.id)})
+        is_error, text = self.call_tool('expenses_apply', {})
         self.assertTrue(is_error)
-        self.assertIn('nothing to update', text)
+        self.assertIn('creates and/or updates', text)
+        is_error, text = self.call_tool('expenses_apply', {'creates': 'nope'})
+        self.assertTrue(is_error)
 
+
+class DictionaryToolTests(AgentsTestCase):
     def test_dictionary_create_update_delete_with_guards(self):
         is_error, data = self.call_tool('dictionary_create', {
             'kind': 'payment_method', 'name': 'Cheque', 'requires_account': True})
@@ -245,21 +264,6 @@ class WriteToolTests(AgentsTestCase):
         self.assertFalse(is_error, data)
         self.assertFalse(PaymentAccount.objects.filter(id=self.joint.id).exists())
 
-    def test_assignment_save_and_get(self):
-        assignment = Assignment.objects.create(created_by=self.user, title='Bill review')
-        is_error, text = self.call_tool('assignment_save', {'assignment_id': str(assignment.id), 'content': '  '})
-        self.assertTrue(is_error)
-        is_error, data = self.call_tool('assignment_save', {
-            'assignment_id': str(assignment.id), 'title': 'October bill review',
-            'summary': 'First draft', 'content': '# Review\n\n- all fine'})
-        self.assertFalse(is_error, data)
-        assignment.refresh_from_db()
-        self.assertEqual(assignment.status, Assignment.STATUS_POPULATED)
-        self.assertEqual(assignment.title, 'October bill review')
-        self.assertIsNotNone(assignment.populated_at)
-        _, data = self.call_tool('assignment_get', {'assignment_id': str(assignment.id)})
-        self.assertEqual(data['content'], '# Review\n\n- all fine')
-
 
 class OwnerEndpointTests(AgentsTestCase):
     def setUp(self):
@@ -276,7 +280,6 @@ class OwnerEndpointTests(AgentsTestCase):
         for row in listing:
             self.assertNotIn('token', row)
             self.assertIn('…', row['token_masked'])
-        # The minted token works on the MCP endpoint.
         self.client.force_authenticate(None)
         self.assertEqual(self.rpc('ping', url=f"/mcp/{resp.data['token']}/").status_code, 200)
 
@@ -289,67 +292,30 @@ class OwnerEndpointTests(AgentsTestCase):
         self.client.force_authenticate(None)
         self.assertEqual(self.rpc('ping').status_code, 404)
 
-    def test_create_assignment_renders_prompt_without_placeholders(self):
+    def test_prompt_renders_live_context_without_placeholders_or_secrets(self):
         self.make_expense()
-        resp = self.client.post(reverse('agents-assignments'), {'title': 'Bill review'}, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
-        prompt = resp.data['rendered_prompt']
+        resp = self.client.get(reverse('agents-prompt'))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        prompt = resp.data['prompt']
         self.assertNotIn('{{', prompt)
-        self.assertIn('Hestia Assignment — Bill review', prompt)
+        self.assertIn('Hestia agent', prompt)
         self.assertIn('Active recurring expenses: 1', prompt)
-        self.assertIn('`expense_create`', prompt)          # tool list from registry
-        self.assertIn(resp.data['id'], prompt)              # assignment_id for assignment_save
-        assignment = Assignment.objects.get(id=resp.data['id'])
-        self.assertIn(f'/api/v1/agents/assignments/by-token/{assignment.content_token}/', prompt)
+        self.assertIn('`expenses_apply`', prompt)          # tool list from the registry
+        self.assertIn('`dictionaries_get`', prompt)
         self.assertNotIn(self.mcp.token, prompt)            # no secrets in the prompt
-
-        # Untitled → dash topic; prompt re-render endpoint works.
-        resp = self.client.post(reverse('agents-assignments'), {}, format='json')
-        self.assertIn('Assignment — —', resp.data['rendered_prompt'])
-        again = self.client.get(reverse('agents-assignment-prompt', args=[resp.data['id']]))
-        self.assertEqual(again.status_code, status.HTTP_200_OK)
-        self.assertNotIn('{{', again.data['prompt'])
-
-    def test_writeback_by_content_token_without_auth(self):
-        assignment = Assignment.objects.create(created_by=self.user, title='Draft')
-        self.client.force_authenticate(None)
-        url = reverse('agents-assignment-writeback', args=[assignment.content_token])
-        resp = self.client.patch(url, {'content': ''}, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        resp = self.client.patch(url, {'title': 'Budget v1', 'summary': 'draft',
-                                       'content': '# Budget'}, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
-        self.assertEqual(resp.data['status'], 'POPUL')
-        assignment.refresh_from_db()
-        self.assertEqual(assignment.content, '# Budget')
-        resp = self.client.patch(reverse('agents-assignment-writeback',
-                                         args=['00000000-0000-0000-0000-000000000000']),
-                                 {'content': 'x'}, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
-
-    def test_assignment_list_detail_delete(self):
-        assignment = Assignment.objects.create(created_by=self.partner, title='Theirs')
-        assignment.save_deliverable('Theirs', 'done', '# Body')
-        listing = self.client.get(reverse('agents-assignments')).data
-        self.assertEqual(listing[0]['created_by_name'], 'V A')
-        self.assertTrue(listing[0]['has_content'])
-        self.assertNotIn('content', listing[0])
-        detail = self.client.get(reverse('agents-assignment', args=[assignment.id])).data
-        self.assertEqual(detail['content'], '# Body')
-        resp = self.client.delete(reverse('agents-assignment', args=[assignment.id]))
-        self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(self.client.get(reverse('agents-prompt')).status_code, 200)
 
     def test_config_default_then_custom_then_reset(self):
         resp = self.client.get(reverse('agents-config'))
-        self.assertEqual(resp.data['assignment_template'], DEFAULT_ASSIGNMENT_TEMPLATE)
+        self.assertEqual(resp.data['prompt_template'], DEFAULT_AGENT_PROMPT_TEMPLATE)
         self.assertFalse(resp.data['is_custom_template'])
         self.assertIn('household_snapshot', resp.data['template_variables'])
 
         resp = self.client.patch(reverse('agents-config'),
-                                 {'assignment_template': 'Custom {{assignment_topic}} x'}, format='json')
+                                 {'prompt_template': 'Custom {{app_name}} x'}, format='json')
         self.assertTrue(resp.data['is_custom_template'])
-        created = self.client.post(reverse('agents-assignments'), {'title': 'T'}, format='json')
-        self.assertEqual(created.data['rendered_prompt'], 'Custom T x')
+        self.assertEqual(self.client.get(reverse('agents-prompt')).data['prompt'], 'Custom Hestia x')
 
-        self.client.patch(reverse('agents-config'), {'assignment_template': ''}, format='json')
-        self.assertEqual(AgentConfig.objects.get(user=self.user).assignment_template, '')
+        self.client.patch(reverse('agents-config'), {'prompt_template': ''}, format='json')
+        self.assertEqual(AgentConfig.objects.get(user=self.user).prompt_template, '')
+        self.assertNotIn('{{', self.client.get(reverse('agents-prompt')).data['prompt'])

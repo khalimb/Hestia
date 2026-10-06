@@ -25,7 +25,6 @@ from expenses.serializers import (
 from expenses.services import force_generate_occurrences
 from activity.models import ActivityLog
 from activity.services import delete_logged
-from .models import Assignment
 
 
 class ToolError(Exception):
@@ -49,7 +48,7 @@ EXPENSE_WRITABLE = (
 
 # ------------------------------------------------------------------ helpers
 
-def _raise_validation(serializer):
+def _errors_text(serializer):
     parts = []
     for field, messages in serializer.errors.items():
         if isinstance(messages, (list, tuple)):
@@ -57,7 +56,11 @@ def _raise_validation(serializer):
         else:
             text = str(messages)
         parts.append(f'{field}: {text}')
-    raise ToolError('validation failed — ' + ' | '.join(parts))
+    return ' | '.join(parts)
+
+
+def _raise_validation(serializer):
+    raise ToolError('validation failed — ' + _errors_text(serializer))
 
 
 def _get_or_error(model, pk, label):
@@ -194,17 +197,6 @@ def occurrences_list(args, user):
     return {'today': today.isoformat(), 'count': len(rows), 'occurrences': rows}
 
 
-def assignment_get(args, user):
-    assignment = _get_or_error(Assignment, args.get('assignment_id'), 'assignment')
-    return {
-        'id': str(assignment.id), 'title': assignment.title,
-        'status': assignment.status, 'summary': assignment.summary,
-        'content': assignment.content,
-        'started_at': assignment.started_at.isoformat(),
-        'populated_at': assignment.populated_at.isoformat() if assignment.populated_at else None,
-    }
-
-
 def activity_recent(args, user):
     """Change log, newest first — what people and agents did."""
     qs = ActivityLog.objects.select_related('actor', 'token')
@@ -240,29 +232,60 @@ def _expense_fields(args):
     return {k: args[k] for k in EXPENSE_WRITABLE if k in args}
 
 
-def expense_create(args, user):
-    fields = _expense_fields(args)
-    serializer = ExpenseSerializer(data=fields)
-    if not serializer.is_valid():
-        _raise_validation(serializer)
-    expense = serializer.save(created_by=user)
-    force_generate_occurrences()
-    expense.refresh_from_db()
-    return {'created': True, 'expense': _expense_card(ExpenseSerializer(expense).data)}
+def expenses_apply(args, user):
+    """Item-wise batch of creates and updates. Bad items are rejected with
+    reasons; the rest lands. One occurrence regeneration for the batch."""
+    creates = args.get('creates') or []
+    updates = args.get('updates') or []
+    if not isinstance(creates, list) or not isinstance(updates, list):
+        raise ToolError('creates and updates must be arrays of objects')
+    if not creates and not updates:
+        raise ToolError('provide creates and/or updates')
 
+    applied, rejected = [], []
+    for index, item in enumerate(creates):
+        if not isinstance(item, dict):
+            rejected.append({'op': 'create', 'index': index, 'errors': 'item must be an object'})
+            continue
+        serializer = ExpenseSerializer(data=_expense_fields(item))
+        if not serializer.is_valid():
+            rejected.append({'op': 'create', 'index': index, 'name': item.get('name'),
+                             'errors': _errors_text(serializer)})
+            continue
+        applied.append(('create', index, serializer.save(created_by=user)))
 
-def expense_update(args, user):
-    expense = _get_or_error(Expense, args.get('expense_id'), 'expense')
-    fields = _expense_fields(args)
-    if not fields:
-        raise ToolError(f'nothing to update; writable fields: {list(EXPENSE_WRITABLE)}')
-    serializer = ExpenseSerializer(expense, data=fields, partial=True)
-    if not serializer.is_valid():
-        _raise_validation(serializer)
-    expense = serializer.save()
-    force_generate_occurrences()
-    expense.refresh_from_db()
-    return {'updated': sorted(fields), 'expense': _expense_card(ExpenseSerializer(expense).data)}
+    for index, item in enumerate(updates):
+        if not isinstance(item, dict):
+            rejected.append({'op': 'update', 'index': index, 'errors': 'item must be an object'})
+            continue
+        expense_id = item.get('expense_id')
+        try:
+            expense = _get_or_error(Expense, expense_id, 'expense')
+        except ToolError as e:
+            rejected.append({'op': 'update', 'index': index, 'expense_id': expense_id,
+                             'errors': str(e)})
+            continue
+        fields = _expense_fields(item)
+        if not fields:
+            rejected.append({'op': 'update', 'index': index, 'expense_id': expense_id,
+                             'errors': f'nothing to update; writable fields: {list(EXPENSE_WRITABLE)}'})
+            continue
+        serializer = ExpenseSerializer(expense, data=fields, partial=True)
+        if not serializer.is_valid():
+            rejected.append({'op': 'update', 'index': index, 'expense_id': expense_id,
+                             'name': expense.name, 'errors': _errors_text(serializer)})
+            continue
+        applied.append(('update', index, serializer.save()))
+
+    if applied:
+        force_generate_occurrences()
+    cards = []
+    for op, index, expense in applied:
+        expense.refresh_from_db()
+        cards.append({'op': op, 'index': index,
+                      'expense': _expense_card(ExpenseSerializer(expense).data)})
+    return {'applied': cards, 'rejected': rejected,
+            'counts': {'applied': len(cards), 'rejected': len(rejected)}}
 
 
 def dictionary_create(args, user):
@@ -301,20 +324,6 @@ def dictionary_delete(args, user):
     name = obj.name
     delete_logged(serializer_cls, obj)
     return {'deleted': True, 'kind': kind, 'name': name}
-
-
-def assignment_save(args, user):
-    assignment = _get_or_error(Assignment, args.get('assignment_id'), 'assignment')
-    content = str(args.get('content') or '').strip()
-    if not content:
-        raise ToolError('content is required (the deliverable markdown)')
-    assignment.save_deliverable(
-        title=str(args.get('title') or '').strip(),
-        summary=str(args.get('summary') or '').strip(),
-        content=content,
-    )
-    return {'saved': True, 'id': str(assignment.id), 'status': assignment.status,
-            'title': assignment.title}
 
 
 # ------------------------------------------------------------------ registry
@@ -376,37 +385,32 @@ TOOLS = [
          'date_to': {'type': 'string', 'description': 'YYYY-MM-DD'},
          'limit': {'type': 'integer', 'default': 50}}},
      'handler': occurrences_list},
-    {'name': 'assignment_get',
-     'description': 'One assignment doc: topic, status, summary, saved content.',
-     'inputSchema': {'type': 'object', 'properties': {'assignment_id': _UUID},
-                     'required': ['assignment_id']},
-     'handler': assignment_get},
     {'name': 'activity_recent',
      'description': 'Change log, newest first: who changed what, through which door '
-                    '(web, MCP client, agent import), with before/after values. '
+                    '(web or an MCP client), with before/after values. '
                     'Defaults to the last 7 days; days=0 for all time. Filter by '
-                    'entity_type, entity_id, source (web | mcp | import).',
+                    'entity_type, entity_id, source (web | mcp).',
      'inputSchema': {'type': 'object', 'properties': {
          'days': {'type': 'integer', 'default': 7},
          'entity_type': {'type': 'string'}, 'entity_id': _UUID,
-         'source': {'type': 'string', 'enum': ['web', 'mcp', 'import', 'system']},
+         'source': {'type': 'string', 'enum': ['web', 'mcp', 'system']},
          'limit': {'type': 'integer', 'default': 50}}},
      'handler': activity_recent},
     # --- write ---
-    {'name': 'expense_create',
-     'description': 'WRITE: create a recurring expense. Validates like the API: '
-                    'account only with a method that requires_account. Occurrences '
-                    'are generated immediately.',
-     'inputSchema': {'type': 'object', 'properties': _EXPENSE_PROPS,
-                     'required': ['name', 'amount', 'recurrence_type', 'start_date']},
-     'handler': expense_create},
-    {'name': 'expense_update',
-     'description': 'WRITE: partial update of an expense (any subset of the create '
-                    'fields). Set is_active=false to deactivate instead of deleting.',
-     'inputSchema': {'type': 'object',
-                     'properties': {'expense_id': _UUID, **_EXPENSE_PROPS},
-                     'required': ['expense_id']},
-     'handler': expense_update},
+    {'name': 'expenses_apply',
+     'description': 'WRITE: batch of expense creates and partial updates in one call. '
+                    'Validates item by item like the API (account only with a method '
+                    'that requires_account); bad items come back in `rejected` with '
+                    'reasons, the rest lands. Set is_active=false to deactivate. '
+                    'Occurrences are generated immediately.',
+     'inputSchema': {'type': 'object', 'properties': {
+         'creates': {'type': 'array', 'items': {
+             'type': 'object', 'properties': _EXPENSE_PROPS,
+             'required': ['name', 'amount', 'recurrence_type', 'start_date']}},
+         'updates': {'type': 'array', 'items': {
+             'type': 'object', 'properties': {'expense_id': _UUID, **_EXPENSE_PROPS},
+             'required': ['expense_id']}}}},
+     'handler': expenses_apply},
     {'name': 'dictionary_create',
      'description': 'WRITE: add a dictionary entry. kind: subject | expense_type | '
                     'payment_method (name, requires_account) | payment_account '
@@ -430,14 +434,5 @@ TOOLS = [
      'inputSchema': {'type': 'object', 'properties': {'kind': _DICT_KIND, 'id': _UUID},
                      'required': ['kind', 'id']},
      'handler': dictionary_delete},
-    {'name': 'assignment_save',
-     'description': 'WRITE: save a finished deliverable onto an assignment doc '
-                    '(title, one-line summary, full markdown content). Marks it '
-                    'saved; re-saving overwrites.',
-     'inputSchema': {'type': 'object', 'properties': {
-         'assignment_id': _UUID, 'title': {'type': 'string'},
-         'summary': {'type': 'string'}, 'content': {'type': 'string'}},
-                     'required': ['assignment_id', 'content']},
-     'handler': assignment_save},
 ]
 TOOL_MAP = {tool['name']: tool for tool in TOOLS}

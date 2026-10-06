@@ -13,9 +13,8 @@ const dashboard = useDashboardStore()
 const agents = useAgentStore()
 const markingPaid = ref({})
 
-// --- Agent prompts: generate here, edit templates in Settings ---------------
-const assignmentTopic = ref('')
-const promptBusy = ref('')        // '' | 'import' | 'assignment'
+// --- Agent prompt: generated here, template edited in Settings --------------
+const promptBusy = ref(false)
 const promptNotice = ref('')
 const promptNoticeError = ref(false)
 const promptPreview = ref('')      // shown when the clipboard is blocked
@@ -28,61 +27,22 @@ function flashPrompt(message, isError = false) {
   promptTimer = setTimeout(() => { promptNotice.value = '' }, isError ? 8000 : 5000)
 }
 
-async function copyOrPreview(text, okMessage) {
+async function copyAgentPrompt() {
+  promptBusy.value = true
   try {
-    await navigator.clipboard.writeText(text)
-    promptPreview.value = ''
-    flashPrompt(okMessage)
-  } catch {
-    promptPreview.value = text
-    flashPrompt("Couldn't reach the clipboard — copy the prompt from the box below.", true)
-  }
-}
-
-async function copyImportPrompt() {
-  promptBusy.value = 'import'
-  try {
-    const { data } = await api.get('agent-import/prompt/')
-    await copyOrPreview(data.prompt, 'Import prompt copied — paste it into your agent and upload the bill.')
+    const prompt = await agents.fetchPrompt()
+    try {
+      await navigator.clipboard.writeText(prompt)
+      promptPreview.value = ''
+      flashPrompt('Agent prompt copied — paste it into Claude (with the Hestia connector) and give the brief.')
+    } catch {
+      promptPreview.value = prompt
+      flashPrompt("Couldn't reach the clipboard — copy the prompt from the box below.", true)
+    }
   } catch (e) {
-    flashPrompt(e.response?.data?.detail || 'Failed to build the import prompt. Generate an import token in Settings first.', true)
+    flashPrompt(e.response?.data?.detail || 'Failed to build the prompt.', true)
   } finally {
-    promptBusy.value = ''
-  }
-}
-
-async function startAssignment() {
-  promptBusy.value = 'assignment'
-  try {
-    const data = await agents.createAssignment(assignmentTopic.value.trim())
-    assignmentTopic.value = ''
-    await copyOrPreview(data.rendered_prompt, 'Assignment prompt copied — paste it into your agent and give the brief. See Assignments for the result.')
-  } catch (e) {
-    flashPrompt('Failed to start assignment: ' + (e.response?.data?.detail || e.message), true)
-  } finally {
-    promptBusy.value = ''
-  }
-}
-
-onMounted(() => {
-  dashboard.fetchAll()
-})
-
-async function markAsPaid(item) {
-  markingPaid.value[item.id] = true
-  try {
-    await api.post(`occurrences/${item.id}/payments/`, {
-      amount_paid: item.expected_amount,
-      currency: item.currency,
-      paid_date: new Date().toISOString().split('T')[0],
-      // Prefill from the expense's configured method (see dashboard/views.py).
-      payment_method: item.payment_method_name || '',
-    })
-    await dashboard.fetchAll()
-  } catch (e) {
-    alert(e.response?.data?.detail || 'Failed to mark as paid')
-  } finally {
-    delete markingPaid.value[item.id]
+    promptBusy.value = false
   }
 }
 
@@ -149,32 +109,25 @@ function dueDateClass(item) {
       <span v-if="dashboard.summary" class="text-muted">{{ dashboard.summary.month }}</span>
     </div>
 
-    <!-- Agent prompts (templates are edited in Settings) -->
+    <!-- Agent prompt (template is edited in Settings) -->
     <div class="card mb-4">
       <div class="card-header">
-        <h3>Agent prompts</h3>
-        <RouterLink to="/settings" class="text-xs text-muted" style="text-decoration:none">Edit templates in Settings</RouterLink>
+        <h3>Agent</h3>
+        <div class="flex gap-2 items-center">
+          <RouterLink to="/activity" class="text-xs text-muted" style="text-decoration:none">What agents did</RouterLink>
+          <RouterLink to="/settings" class="text-xs text-muted" style="text-decoration:none">Edit template</RouterLink>
+        </div>
       </div>
       <div class="card-body">
         <div v-if="promptNotice" :class="['alert', promptNoticeError ? 'alert-danger' : 'alert-success']">{{ promptNotice }}</div>
-        <div class="grid-2" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1rem">
-          <div>
-            <p class="text-sm" style="font-weight:600">Import a bill</p>
-            <p class="text-xs text-muted" style="margin-bottom:0.5rem">Prompt that asks the agent for a bill, reads it, and creates the expense.</p>
-            <button class="btn btn-sm btn-primary" :disabled="promptBusy === 'import'" @click="copyImportPrompt">
-              {{ promptBusy === 'import' ? 'Building…' : 'Copy import prompt' }}
-            </button>
-          </div>
-          <div>
-            <p class="text-sm" style="font-weight:600">New assignment</p>
-            <p class="text-xs text-muted" style="margin-bottom:0.5rem">Prompt for a deliverable (bill review, budget draft, bulk edit) saved back to <RouterLink to="/assignments">Assignments</RouterLink>.</p>
-            <div class="flex gap-2 items-center" style="flex-wrap:wrap">
-              <input v-model="assignmentTopic" type="text" class="form-input" style="flex:1; min-width:180px" placeholder="Topic (optional)" @keyup.enter="startAssignment" />
-              <button class="btn btn-sm btn-primary" :disabled="promptBusy === 'assignment'" @click="startAssignment">
-                {{ promptBusy === 'assignment' ? 'Starting…' : 'Copy assignment prompt' }}
-              </button>
-            </div>
-          </div>
+        <div class="flex gap-4 items-center" style="flex-wrap:wrap">
+          <p class="text-sm text-muted" style="flex:1; min-width:240px; margin:0">
+            Copy the prompt, paste it into an agent connected to Hestia, then give it bills to add,
+            corrections, or a bulk change. Every change it makes is recorded on the Activity page.
+          </p>
+          <button class="btn btn-primary" :disabled="promptBusy" @click="copyAgentPrompt">
+            {{ promptBusy ? 'Building…' : 'Copy agent prompt' }}
+          </button>
         </div>
         <div v-if="promptPreview" style="margin-top:0.75rem">
           <textarea :value="promptPreview" readonly class="form-input" rows="8" style="font-family:'SF Mono',Monaco,monospace; font-size:0.8125rem" @focus="$event.target.select()"></textarea>

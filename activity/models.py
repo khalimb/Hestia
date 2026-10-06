@@ -1,5 +1,5 @@
 """Activity log: one row per change, with who made it, through which door
-(web UI, agent import, MCP client + session), and a before/after diff.
+(web UI, or an MCP client + session), and a before/after diff.
 
 Rows are written by `activity.services.record_activity`, called from the
 shared serializers (so the web API and the MCP tools log identically) and
@@ -14,12 +14,10 @@ from django.db import models
 class ActivityLog(models.Model):
     SOURCE_WEB = 'web'
     SOURCE_MCP = 'mcp'
-    SOURCE_IMPORT = 'import'
     SOURCE_SYSTEM = 'system'
     SOURCE_CHOICES = [
         (SOURCE_WEB, 'Web'),
         (SOURCE_MCP, 'MCP agent'),
-        (SOURCE_IMPORT, 'Agent import'),
         (SOURCE_SYSTEM, 'System'),
     ]
     ACTION_CHOICES = [
@@ -46,7 +44,7 @@ class ActivityLog(models.Model):
     )
     action = models.CharField(max_length=10, choices=ACTION_CHOICES)
     # 'expense' | 'subject' | 'expense_type' | 'payment_method' | 'payment_account'
-    # | 'payment' | 'assignment'. Free text so new entities need no migration.
+    # | 'payment'. Free text so new entities need no migration.
     entity_type = models.CharField(max_length=30, db_index=True)
     entity_id = models.UUIDField(db_index=True)
     # Snapshot of the entity's name at the time, so deleted entities still read.

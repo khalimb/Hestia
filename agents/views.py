@@ -1,17 +1,11 @@
 from django.db.models import Count
-from rest_framework import generics, permissions, status
+from rest_framework import generics, status
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from activity.services import record_activity
-
-from .assignment_prompt import DEFAULT_ASSIGNMENT_TEMPLATE, build_assignment_prompt
-from .models import McpToken, McpSession, Assignment, AgentConfig
-from .serializers import (
-    McpTokenSerializer, McpSessionSerializer, AssignmentSerializer,
-    AssignmentDetailSerializer, AssignmentWritebackSerializer, AgentConfigSerializer,
-)
+from .agent_prompt import DEFAULT_AGENT_PROMPT_TEMPLATE, build_agent_prompt
+from .models import McpToken, McpSession, AgentConfig
+from .serializers import McpTokenSerializer, McpSessionSerializer, AgentConfigSerializer
 
 
 def get_or_create_config(user):
@@ -19,7 +13,7 @@ def get_or_create_config(user):
     return config
 
 
-# --- MCP tokens (owner-facing, JWT) -----------------------------------------
+# --- MCP tokens --------------------------------------------------------------
 
 class McpTokenListCreateView(generics.ListCreateAPIView):
     """GET: the current user's tokens (masked). POST {name}: mint one; the
@@ -59,79 +53,21 @@ class McpSessionListView(generics.ListAPIView):
                 .order_by('-started_at')[:200])
 
 
-# --- Assignments (owner-facing, JWT) ----------------------------------------
+# --- The agent prompt ----------------------------------------------------------
 
-class AssignmentListCreateView(generics.ListCreateAPIView):
-    """GET: all household assignments. POST {title?}: start one and return it
-    with `rendered_prompt`, ready to paste into an agent session."""
-    serializer_class = AssignmentSerializer
-    pagination_class = None
-    queryset = Assignment.objects.select_related('created_by')
+class AgentPromptView(APIView):
+    """The ready-to-paste prompt, rendered with live data from the current
+    user's template (or the default)."""
 
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        assignment = serializer.save(created_by=request.user)
-        record_activity('create', 'assignment', assignment.pk, assignment.title,
-                        {'title': {'from': None, 'to': assignment.title}})
-        data = AssignmentSerializer(assignment).data
-        data['rendered_prompt'] = _render(assignment, request)
-        return Response(data, status=status.HTTP_201_CREATED)
-
-
-class AssignmentDetailView(generics.RetrieveDestroyAPIView):
-    serializer_class = AssignmentDetailSerializer
-    queryset = Assignment.objects.select_related('created_by')
-
-    def perform_destroy(self, instance):
-        record_activity('delete', 'assignment', instance.pk, instance.title,
-                        {'title': {'from': instance.title, 'to': None},
-                         'status': {'from': instance.status, 'to': None}})
-        instance.delete()
-
-
-class AssignmentPromptView(APIView):
-    """Re-render the prompt for an existing assignment (resume a session)."""
-
-    def get(self, request, pk):
-        assignment = generics.get_object_or_404(Assignment, pk=pk)
-        return Response({'prompt': _render(assignment, request)})
-
-
-def _render(assignment, request):
-    config = get_or_create_config(request.user)
-    template = config.assignment_template or DEFAULT_ASSIGNMENT_TEMPLATE
-    return build_assignment_prompt(template, assignment, request)
+    def get(self, request):
+        config = get_or_create_config(request.user)
+        template = config.prompt_template or DEFAULT_AGENT_PROMPT_TEMPLATE
+        return Response({'prompt': build_agent_prompt(template)})
 
 
 class AgentConfigView(generics.RetrieveUpdateAPIView):
-    """GET / PATCH the current user's assignment prompt template."""
+    """GET / PATCH the current user's prompt template."""
     serializer_class = AgentConfigSerializer
 
     def get_object(self):
         return get_or_create_config(self.request.user)
-
-
-# --- Agent-facing fallback (no MCP) ----------------------------------------
-
-class AssignmentWritebackView(APIView):
-    """PATCH by the assignment's unguessable content_token. No bearer token:
-    the UUID in the URL is the capability, scoped to this one doc, so the
-    rendered prompt carries no reusable secret."""
-    authentication_classes = []
-    permission_classes = [permissions.AllowAny]
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = 'agent_import'
-
-    def patch(self, request, content_token):
-        assignment = Assignment.objects.filter(content_token=content_token).first()
-        if assignment is None:
-            return Response({'detail': 'Unknown assignment.'}, status=status.HTTP_404_NOT_FOUND)
-        serializer = AssignmentWritebackSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        assignment.save_deliverable(
-            title=serializer.validated_data.get('title', ''),
-            summary=serializer.validated_data.get('summary', ''),
-            content=serializer.validated_data['content'],
-        )
-        return Response(AssignmentSerializer(assignment).data)

@@ -61,7 +61,7 @@ function when(iso) {
 const ENTITY_LABELS = {
   expense: 'Expense', subject: 'Subject', expense_type: 'Expense type',
   payment_method: 'Payment method', payment_account: 'Account',
-  payment: 'Payment', assignment: 'Assignment',
+  payment: 'Payment',
 }
 
 function entityLabel(type) {
@@ -94,7 +94,7 @@ function changeLines(row) {
     <div class="page-header">
       <div>
         <h1>Activity</h1>
-        <p class="text-sm text-muted">Who changed what, through the web, an agent import, or an MCP agent session.</p>
+        <p class="text-sm text-muted">Who changed what, through the web or an MCP agent session.</p>
       </div>
       <button class="btn btn-outline" :disabled="activity.loading" @click="activity.fetchSessions(); load(activity.page)">
         {{ activity.loading ? 'Refreshing...' : 'Refresh' }}
@@ -155,7 +155,6 @@ function changeLines(row) {
             <option value="">All sources</option>
             <option value="web">Web</option>
             <option value="mcp">MCP agent</option>
-            <option value="import">Agent import</option>
           </select>
         </div>
         <div class="form-group" style="margin:0; flex:1">

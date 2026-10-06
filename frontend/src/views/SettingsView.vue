@@ -42,23 +42,15 @@ const editingAccountId = ref(null)
 const accountForm = ref({ name: '', notes: '' })
 const accountError = ref('')
 
-// Agent Access (MCP) + Assignment prompt
+// Agent Access (MCP) + agent prompt template
 const newTokenName = ref('')
 const tokenBusyMcp = ref(false)
 const tokenResult = ref(null) // { token, connector_url, name } shown once after minting
 const agentError = ref('')
 const agentSuccess = ref('')
 const urlCopyState = ref('')
-const assignmentTemplateDraft = ref('')
-const savingAssignmentTemplate = ref(false)
-
-// Agent Import
-const importConfig = ref(null)
-const templateDraft = ref('')
-const importError = ref('')
-const importSuccess = ref('')
-const tokenBusy = ref(false)
-const savingTemplate = ref(false)
+const promptTemplateDraft = ref('')
+const savingPromptTemplate = ref(false)
 
 onMounted(() => {
   if (auth.user) {
@@ -70,11 +62,10 @@ onMounted(() => {
   store.fetchExpenseTypes()
   store.fetchPaymentMethods()
   store.fetchPaymentAccounts()
-  fetchImportConfig()
   agents.fetchTokens().catch(() => { agentError.value = 'Failed to load MCP tokens.' })
   agents.fetchConfig()
-    .then((cfg) => { assignmentTemplateDraft.value = cfg.assignment_template })
-    .catch(() => { agentError.value = 'Failed to load assignment prompt settings.' })
+    .then((cfg) => { promptTemplateDraft.value = cfg.prompt_template })
+    .catch(() => { agentError.value = 'Failed to load agent prompt settings.' })
 })
 
 async function handleSave() {
@@ -313,113 +304,40 @@ function claudeCodeCommand() {
   return tokenResult.value ? `claude mcp add --transport http hestia ${tokenResult.value.connector_url}` : ''
 }
 
-async function saveAssignmentTemplate() {
+async function savePromptTemplate() {
   agentError.value = ''
   agentSuccess.value = ''
-  savingAssignmentTemplate.value = true
+  savingPromptTemplate.value = true
   try {
-    const cfg = await agents.saveTemplate(assignmentTemplateDraft.value)
-    assignmentTemplateDraft.value = cfg.assignment_template
-    agentSuccess.value = 'Assignment prompt template saved.'
+    const cfg = await agents.saveTemplate(promptTemplateDraft.value)
+    promptTemplateDraft.value = cfg.prompt_template
+    agentSuccess.value = 'Agent prompt template saved.'
   } catch {
-    agentError.value = 'Failed to save assignment template.'
+    agentError.value = 'Failed to save the agent prompt template.'
   } finally {
-    savingAssignmentTemplate.value = false
+    savingPromptTemplate.value = false
   }
 }
 
-async function resetAssignmentTemplate() {
-  if (!confirm('Reset the assignment prompt template to the system default?')) return
+async function resetPromptTemplate() {
+  if (!confirm('Reset the agent prompt template to the system default?')) return
   agentError.value = ''
   agentSuccess.value = ''
-  savingAssignmentTemplate.value = true
+  savingPromptTemplate.value = true
   try {
     const cfg = await agents.saveTemplate('')
-    assignmentTemplateDraft.value = cfg.assignment_template
-    agentSuccess.value = 'Assignment prompt template reset to default.'
+    promptTemplateDraft.value = cfg.prompt_template
+    agentSuccess.value = 'Agent prompt template reset to default.'
   } catch {
-    agentError.value = 'Failed to reset assignment template.'
+    agentError.value = 'Failed to reset the agent prompt template.'
   } finally {
-    savingAssignmentTemplate.value = false
+    savingPromptTemplate.value = false
   }
 }
 
-// Agent Import
+// Render a literal {{placeholder}} without tripping Vue's template parser.
 function varTag(name) {
-  // Render a literal {{placeholder}} without tripping Vue's template parser.
   return `{{${name}}}`
-}
-
-async function fetchImportConfig(syncDraft = true) {
-  try {
-    const { data } = await api.get('agent-import/config/')
-    importConfig.value = data
-    if (syncDraft) templateDraft.value = data.prompt_template
-  } catch {
-    importError.value = 'Failed to load agent import settings.'
-  }
-}
-
-async function generateToken() {
-  importError.value = ''
-  importSuccess.value = ''
-  tokenBusy.value = true
-  try {
-    await api.post('agent-import/token/')
-    await fetchImportConfig(false)
-    importSuccess.value = 'Import token generated. Copy the prompt below to use it.'
-  } catch {
-    importError.value = 'Failed to generate token.'
-  } finally {
-    tokenBusy.value = false
-  }
-}
-
-async function revokeToken() {
-  if (!confirm('Revoke the current import token? Any prompt already shared will stop working.')) return
-  importError.value = ''
-  importSuccess.value = ''
-  tokenBusy.value = true
-  try {
-    await api.delete('agent-import/token/')
-    await fetchImportConfig(false)
-    importSuccess.value = 'Import token revoked.'
-  } catch {
-    importError.value = 'Failed to revoke token.'
-  } finally {
-    tokenBusy.value = false
-  }
-}
-
-async function saveTemplate() {
-  importError.value = ''
-  importSuccess.value = ''
-  savingTemplate.value = true
-  try {
-    await api.patch('agent-import/config/', { prompt_template: templateDraft.value })
-    await fetchImportConfig(true)
-    importSuccess.value = 'Prompt template saved.'
-  } catch {
-    importError.value = 'Failed to save template.'
-  } finally {
-    savingTemplate.value = false
-  }
-}
-
-async function resetTemplate() {
-  if (!confirm('Reset the prompt template to the system default?')) return
-  importError.value = ''
-  importSuccess.value = ''
-  savingTemplate.value = true
-  try {
-    await api.patch('agent-import/config/', { prompt_template: '' })
-    await fetchImportConfig(true)
-    importSuccess.value = 'Prompt template reset to default.'
-  } catch {
-    importError.value = 'Failed to reset template.'
-  } finally {
-    savingTemplate.value = false
-  }
 }
 </script>
 
@@ -601,80 +519,6 @@ async function resetTemplate() {
       </div>
     </div>
 
-    <!-- Agent Import -->
-    <div class="card mb-4">
-      <div class="card-header">
-        <h3>Agent Import</h3>
-      </div>
-      <div class="card-body">
-        <p class="text-sm text-muted mb-4">
-          Token and prompt template for the bill-import agent. The prompt asks the agent to upload a bill,
-          reads it, picks the matching subject, type and payment details, lets you confirm, then submits the
-          expense to Hestia. Copy the prompt itself from the Dashboard.
-        </p>
-
-        <div v-if="importSuccess" class="alert alert-success">{{ importSuccess }}</div>
-        <div v-if="importError" class="alert alert-danger">{{ importError }}</div>
-
-        <!-- Submission token -->
-        <div class="form-group">
-          <label class="form-label">Submission token</label>
-          <div class="flex gap-2 items-center" style="flex-wrap:wrap">
-            <code
-              v-if="importConfig?.has_token"
-              style="background:var(--color-gray-100,#f3f4f6); padding:0.25rem 0.5rem; border-radius:0.375rem; font-size:0.8125rem"
-            >{{ importConfig.token_masked }}</code>
-            <span v-else class="text-sm text-muted">No token yet — generate one to enable import.</span>
-            <button class="btn btn-sm btn-primary" :disabled="tokenBusy" @click="generateToken">
-              {{ importConfig?.has_token ? 'Regenerate' : 'Generate token' }}
-            </button>
-            <button
-              v-if="importConfig?.has_token"
-              class="btn btn-sm btn-outline"
-              :disabled="tokenBusy"
-              style="color:var(--color-danger)"
-              @click="revokeToken"
-            >
-              Revoke
-            </button>
-          </div>
-          <p class="text-xs text-muted mt-1">
-            Scoped to creating expenses only — it can't read your data or change your account. The prompt
-            embeds this token, so treat it as a secret and revoke it if it leaks.
-          </p>
-        </div>
-
-        <!-- Prompt template -->
-        <div class="form-group">
-          <label class="form-label">Prompt template</label>
-          <textarea
-            v-model="templateDraft"
-            class="form-input"
-            rows="10"
-            spellcheck="false"
-            style="font-family:'SF Mono',Monaco,monospace; font-size:0.8125rem"
-          ></textarea>
-          <p class="text-xs text-muted mt-1">
-            Variables filled in automatically:
-            <code
-              v-for="v in importConfig?.template_variables || []"
-              :key="v"
-              style="background:var(--color-gray-100,#f3f4f6); padding:0.0625rem 0.375rem; border-radius:0.25rem; margin-right:0.25rem; font-size:0.75rem"
-            >{{ varTag(v) }}</code>
-          </p>
-          <div class="flex gap-2" style="margin-top:0.5rem">
-            <button class="btn btn-sm btn-primary" :disabled="savingTemplate" @click="saveTemplate">
-              {{ savingTemplate ? 'Saving...' : 'Save template' }}
-            </button>
-            <button class="btn btn-sm btn-outline" :disabled="savingTemplate" @click="resetTemplate">
-              Reset to default
-            </button>
-          </div>
-        </div>
-
-      </div>
-    </div>
-
     <!-- Agent Access (MCP) -->
     <div class="card mb-4">
       <div class="card-header">
@@ -682,8 +526,8 @@ async function resetTemplate() {
       </div>
       <div class="card-body">
         <p class="text-sm text-muted mb-4">
-          Let an AI agent read and change Hestia directly: list and edit expenses, maintain the
-          dictionaries, and save assignment deliverables. Each token is a connector URL for one client.
+          Let an AI agent read and change Hestia directly: list, add and edit expenses and maintain the
+          dictionaries. Each token is a connector URL for one client.
           Anything the agent creates is attributed to you.
         </p>
 
@@ -752,21 +596,20 @@ async function resetTemplate() {
       </div>
     </div>
 
-    <!-- Assignment prompt -->
+    <!-- Agent prompt template -->
     <div class="card mb-4">
       <div class="card-header">
-        <h3>Assignment Prompt</h3>
-        <RouterLink to="/assignments" class="btn btn-sm btn-outline">Open Assignments</RouterLink>
+        <h3>Agent Prompt</h3>
       </div>
       <div class="card-body">
         <p class="text-sm text-muted mb-4">
-          Template for the prompt copied when you start a new assignment from the Dashboard or the Assignments
-          page. It frames the agent as a practitioner producing a specific deliverable, points it at the MCP
-          tools above for context and changes, and tells it how to save the result back here.
+          Template for the prompt copied from the Dashboard. It tells the agent to treat your next message as
+          the brief — bills to add, corrections, or a bulk change — to plan and confirm before writing, and to
+          work only through the MCP tools above.
         </p>
         <div class="form-group" style="margin-bottom:0">
           <textarea
-            v-model="assignmentTemplateDraft"
+            v-model="promptTemplateDraft"
             class="form-input"
             rows="12"
             spellcheck="false"
@@ -781,10 +624,10 @@ async function resetTemplate() {
             >{{ varTag(v) }}</code>
           </p>
           <div class="flex gap-2" style="margin-top:0.5rem">
-            <button class="btn btn-sm btn-primary" :disabled="savingAssignmentTemplate" @click="saveAssignmentTemplate">
-              {{ savingAssignmentTemplate ? 'Saving...' : 'Save template' }}
+            <button class="btn btn-sm btn-primary" :disabled="savingPromptTemplate" @click="savePromptTemplate">
+              {{ savingPromptTemplate ? 'Saving...' : 'Save template' }}
             </button>
-            <button class="btn btn-sm btn-outline" :disabled="savingAssignmentTemplate" @click="resetAssignmentTemplate">
+            <button class="btn btn-sm btn-outline" :disabled="savingPromptTemplate" @click="resetPromptTemplate">
               Reset to default
             </button>
           </div>

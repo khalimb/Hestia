@@ -4,9 +4,7 @@ import api from '../api/axios'
 
 export const useAgentStore = defineStore('agents', () => {
   const tokens = ref([])
-  const assignments = ref([])
   const config = ref(null)
-  const loading = ref(false)
 
   // --- MCP tokens -----------------------------------------------------------
   async function fetchTokens() {
@@ -26,40 +24,12 @@ export const useAgentStore = defineStore('agents', () => {
     tokens.value = tokens.value.filter((t) => t.id !== id)
   }
 
-  // --- Assignments ----------------------------------------------------------
-  async function fetchAssignments() {
-    loading.value = true
-    try {
-      const { data } = await api.get('agents/assignments/')
-      assignments.value = data
-    } finally {
-      loading.value = false
-    }
-  }
-
-  async function createAssignment(title) {
-    const payload = title ? { title } : {}
-    const { data } = await api.post('agents/assignments/', payload)
-    await fetchAssignments()
-    return data // includes rendered_prompt
-  }
-
-  async function fetchAssignment(id) {
-    const { data } = await api.get(`agents/assignments/${id}/`)
-    return data
-  }
-
-  async function fetchAssignmentPrompt(id) {
-    const { data } = await api.get(`agents/assignments/${id}/prompt/`)
+  // --- The agent prompt -----------------------------------------------------
+  async function fetchPrompt() {
+    const { data } = await api.get('agents/prompt/')
     return data.prompt
   }
 
-  async function deleteAssignment(id) {
-    await api.delete(`agents/assignments/${id}/`)
-    assignments.value = assignments.value.filter((a) => a.id !== id)
-  }
-
-  // --- Prompt template config ----------------------------------------------
   async function fetchConfig() {
     const { data } = await api.get('agents/config/')
     config.value = data
@@ -67,15 +37,10 @@ export const useAgentStore = defineStore('agents', () => {
   }
 
   async function saveTemplate(template) {
-    const { data } = await api.patch('agents/config/', { assignment_template: template })
+    const { data } = await api.patch('agents/config/', { prompt_template: template })
     config.value = data
     return data
   }
 
-  return {
-    tokens, assignments, config, loading,
-    fetchTokens, createToken, revokeToken,
-    fetchAssignments, createAssignment, fetchAssignment, fetchAssignmentPrompt, deleteAssignment,
-    fetchConfig, saveTemplate,
-  }
+  return { tokens, config, fetchTokens, createToken, revokeToken, fetchPrompt, fetchConfig, saveTemplate }
 })

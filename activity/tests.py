@@ -7,7 +7,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from agents.models import McpToken, McpSession, Assignment
+from agents.models import McpToken, McpSession
 from expenses.models import PaymentMethod, PaymentAccount, Expense, Occurrence
 from .models import ActivityLog
 
@@ -104,31 +104,6 @@ class WebWriteLoggingTests(ActivityTestCase):
         self.client.delete(reverse('payment-detail', args=[resp.data['id']]))
         self.assertTrue(ActivityLog.objects.filter(entity_type='payment', action='delete').exists())
 
-    def test_assignment_create_save_delete_logged(self):
-        resp = self.client.post(reverse('agents-assignments'), {'title': 'Review'}, format='json')
-        assignment = Assignment.objects.get(id=resp.data['id'])
-        assignment.save_deliverable('Review v1', 'draft', '# body')
-        self.client.delete(reverse('agents-assignment', args=[assignment.id]))
-        actions = list(ActivityLog.objects.filter(entity_type='assignment')
-                       .order_by('created_at').values_list('action', flat=True))
-        self.assertEqual(actions, ['create', 'update', 'delete'])
-        saved = ActivityLog.objects.get(entity_type='assignment', action='update')
-        self.assertEqual(saved.changes['status'], {'from': 'EMPTY', 'to': 'POPUL'})
-
-    def test_import_source_detected(self):
-        self.client.force_authenticate(None)
-        self.client.force_authenticate(self.user)
-        token = self.client.post(reverse('agent-import-token')).data['token']
-        self.client.force_authenticate(None)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
-        resp = self.client.post(reverse('agent-import-expense-create'), self.payload(name='Imported'),
-                                format='json')
-        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
-        row = ActivityLog.objects.get(entity_label='Imported')
-        self.assertEqual(row.source, 'import')
-        self.assertEqual(row.actor, self.user)
-        self.assertEqual(row.via, 'Agent import')
-
 
 class McpSessionLoggingTests(ActivityTestCase):
     def test_initialize_mints_session_and_writes_are_attributed(self):
@@ -143,8 +118,8 @@ class McpSessionLoggingTests(ActivityTestCase):
 
         headers = {'HTTP_MCP_SESSION_ID': session_id}
         self.rpc('tools/call', {'name': 'dictionaries_get', 'arguments': {}}, headers)
-        resp = self.rpc('tools/call', {'name': 'expense_create', 'arguments': self.payload(
-            name='Via MCP', payment_method=str(self.cash.id))}, headers)
+        resp = self.rpc('tools/call', {'name': 'expenses_apply', 'arguments': {
+            'creates': [self.payload(name='Via MCP', payment_method=str(self.cash.id))]}}, headers)
         self.assertFalse(resp.json()['result']['isError'], resp.json())
         self.assertNotIn('Mcp-Session-Id', resp)   # only emitted on initialize
 
@@ -157,7 +132,7 @@ class McpSessionLoggingTests(ActivityTestCase):
 
         session.refresh_from_db()
         self.assertEqual(session.request_count, 3)
-        self.assertEqual(session.tool_calls, {'dictionaries_get': 1, 'expense_create': 1})
+        self.assertEqual(session.tool_calls, {'dictionaries_get': 1, 'expenses_apply': 1})
 
         # DELETE with the header ends the session.
         resp = self.client.delete(self.mcp_url, **headers)

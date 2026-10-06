@@ -38,9 +38,4 @@ def resolve_actor_and_source():
     user = getattr(request, 'user', None)
     if user is None or not getattr(user, 'is_authenticated', False):
         user = None
-    # DRF mirrors request.auth onto the underlying HttpRequest; the agent
-    # import authenticator sets it to the AgentImportConfig row.
-    auth = getattr(request, 'auth', None)
-    source = ActivityLog.SOURCE_IMPORT if type(auth).__name__ == 'AgentImportConfig' \
-        else ActivityLog.SOURCE_WEB
-    return user, source, None, None
+    return user, ActivityLog.SOURCE_WEB, None, None

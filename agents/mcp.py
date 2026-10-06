@@ -21,9 +21,9 @@ SERVER_INFO = {'name': 'hestia', 'version': '1.0.0'}
 INSTRUCTIONS = (
     "Hestia — the household's recurring-expense tracker. Reads: dictionaries_get "
     '(call first for ids), expenses_list, expense_get, occurrences_list, '
-    'assignment_get. Writes (tools marked WRITE): expense_create, expense_update, '
-    'dictionary_create/update/delete, assignment_save. Confirm every write with '
-    'the user before calling it, and never invent dictionary ids.'
+    'activity_recent. Writes (tools marked WRITE): expenses_apply (batch of '
+    'creates + updates), dictionary_create/update/delete. Confirm every write '
+    'with the user before calling it, and never invent dictionary ids.'
 )
 
 

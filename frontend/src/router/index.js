@@ -49,11 +49,6 @@ const routes = [
     component: () => import('../views/OccurrenceDetailView.vue'),
   },
   {
-    path: '/assignments',
-    name: 'Assignments',
-    component: () => import('../views/AssignmentsView.vue'),
-  },
-  {
     path: '/activity',
     name: 'Activity',
     component: () => import('../views/ActivityView.vue'),
