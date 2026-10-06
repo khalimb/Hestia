@@ -205,7 +205,7 @@ function dueDateClass(item) {
       <div class="grid-2 mb-4">
         <!-- Expense type breakdown chart -->
         <div class="card" v-if="typeChartData">
-          <div class="card-header"><h3>By Category</h3><span class="text-xs text-muted">recurring + one-off, this month</span></div>
+          <div class="card-header"><h3>By Category</h3><RouterLink to="/analytics" class="text-xs text-muted" style="text-decoration:none">this month · more in Analytics</RouterLink></div>
           <div class="card-body" style="max-height: 350px; display: flex; justify-content: center;">
             <Pie :data="typeChartData" :options="chartOptions" />
           </div>

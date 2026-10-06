@@ -91,7 +91,8 @@ class TransportTests(AgentsTestCase):
         names = {t['name'] for t in self.rpc('tools/list').json()['result']['tools']}
         self.assertEqual(names, {
             'dictionaries_get', 'expenses_list', 'expense_get', 'occurrences_list',
-            'transactions_list', 'activity_recent', 'expenses_apply', 'transactions_apply',
+            'transactions_list', 'spend_summary', 'activity_recent', 'expenses_apply',
+            'transactions_apply',
             'dictionary_create', 'dictionary_update', 'dictionary_delete',
         })
 

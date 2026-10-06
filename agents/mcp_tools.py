@@ -27,6 +27,7 @@ from activity.models import ActivityLog
 from activity.services import delete_logged
 from transactions.models import Transaction
 from transactions.serializers import TransactionSerializer
+from dashboard.analytics import spend_summary as _spend_summary, parse_window
 
 
 class ToolError(Exception):
@@ -239,6 +240,21 @@ def transactions_list(args, user):
         totals[r['currency']] = totals.get(r['currency'], 0) + float(r['amount'])
     return {'count': len(rows), 'totals': {k: f'{v:.2f}' for k, v in totals.items()},
             'transactions': [_transaction_row(r) for r in rows]}
+
+
+def spend_summary(args, user):
+    """Totals for a date window, per currency: recurring (expected + paid) and
+    one-off, by category, subject and month."""
+    try:
+        start, end = parse_window(args.get('date_from'), args.get('date_to'))
+    except ValueError as e:
+        raise ToolError(str(e))
+    if (end - start).days > 366 * 3:
+        raise ToolError('window must be 3 years or less')
+    normalise = str(args.get('normalise_to') or '').upper() or None
+    if normalise not in (None, 'USD'):
+        raise ToolError('normalise_to supports USD only')
+    return _spend_summary(start, end, normalise_to=normalise)
 
 
 def activity_recent(args, user):
@@ -521,6 +537,19 @@ TOOLS = [
          'account': _UUID, 'paid_by': _UUID, 'search': {'type': 'string'},
          'limit': {'type': 'integer', 'default': 100}}},
      'handler': transactions_list},
+    {'name': 'spend_summary',
+     'description': 'How much was spent in a date window (default: this month), per '
+                    'currency: recurring occurrences due in the window (expected and '
+                    'paid) plus one-off transactions, with breakdowns by category, '
+                    'subject and month. Use for "how much did we spend in Q3". '
+                    'normalise_to="USD" adds a `normalised` bucket converting every '
+                    'currency at the ECB rate on date_to (rates and any unconverted '
+                    'currencies are reported).',
+     'inputSchema': {'type': 'object', 'properties': {
+         'date_from': {'type': 'string', 'description': 'YYYY-MM-DD'},
+         'date_to': {'type': 'string', 'description': 'YYYY-MM-DD'},
+         'normalise_to': {'type': 'string', 'enum': ['USD']}}},
+     'handler': spend_summary},
     {'name': 'activity_recent',
      'description': 'Change log, newest first: who changed what, through which door '
                     '(web or an MCP client), with before/after values. '

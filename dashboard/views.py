@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from expenses.models import Subject, ExpenseType, Expense, Occurrence
 from expenses.services import ensure_occurrences_generated
 from transactions.models import Transaction
+from .analytics import spend_summary, parse_window
 
 
 class DashboardSummaryView(APIView):
@@ -193,3 +194,22 @@ class DashboardCoverageView(APIView):
             'unassigned': {'no_subject': no_subject, 'no_type': no_type},
             'total_active_expenses': active_expenses.count(),
         })
+
+
+class DashboardAnalyticsView(APIView):
+    """Spend over an arbitrary window (default: this month). Query params
+    date_from / date_to as YYYY-MM-DD. See dashboard/analytics.py."""
+
+    def get(self, request):
+        try:
+            start, end = parse_window(request.query_params.get('date_from'),
+                                      request.query_params.get('date_to'))
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=400)
+        if (end - start).days > 366 * 3:
+            return Response({'detail': 'window must be 3 years or less'}, status=400)
+        ensure_occurrences_generated()
+        normalise = request.query_params.get('normalise', '').upper() or None
+        if normalise not in (None, 'USD'):
+            return Response({'detail': 'normalise supports USD only'}, status=400)
+        return Response(spend_summary(start, end, normalise_to=normalise))

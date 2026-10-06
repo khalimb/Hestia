@@ -164,3 +164,6 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
     CSRF_TRUSTED_ORIGINS = os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',')
+
+# Exchange-rate source for analytics normalisation (ECB rates via Frankfurter).
+FX_API_BASE = os.environ.get('FX_API_BASE', 'https://api.frankfurter.dev/v1')
