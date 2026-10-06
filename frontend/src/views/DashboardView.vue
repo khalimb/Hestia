@@ -46,6 +46,28 @@ async function copyAgentPrompt() {
   }
 }
 
+onMounted(() => {
+  dashboard.fetchAll()
+})
+
+async function markAsPaid(item) {
+  markingPaid.value[item.id] = true
+  try {
+    await api.post(`occurrences/${item.id}/payments/`, {
+      amount_paid: item.expected_amount,
+      currency: item.currency,
+      paid_date: new Date().toISOString().split('T')[0],
+      // Prefill from the expense's configured method (see dashboard/views.py).
+      payment_method: item.payment_method_name || '',
+    })
+    await dashboard.fetchAll()
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to mark as paid')
+  } finally {
+    delete markingPaid.value[item.id]
+  }
+}
+
 const CHART_COLORS = ['#f97316', '#10b981', '#3b82f6', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f59e0b', '#06b6d4', '#84cc16']
 
 const typeChartData = computed(() => {
