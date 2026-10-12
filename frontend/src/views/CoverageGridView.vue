@@ -21,32 +21,46 @@ async function fetchCoverage() {
 
 onMounted(fetchCoverage)
 
-const subjects = computed(() => data.value?.subjects || [])
-const expenseTypes = computed(() => data.value?.expense_types || [])
-const matrix = computed(() => data.value?.matrix || {})
+// One section per subject type (plus "Untyped subjects" last, against every category).
+const sections = computed(() => data.value?.sections || [])
 
-// Active expenses linking a (subject, type) pair; 0 when none exist (a gap).
-function cellCount(subjectId, typeId) {
-  return matrix.value[subjectId]?.[typeId] || 0
+function cellCount(section, subjectId, typeId) {
+  return section.matrix[subjectId]?.[typeId] || 0
 }
 
-// How many expense types a given subject has at least one expense for.
-function typesCovered(subjectId) {
-  const row = matrix.value[subjectId]
+function typesCovered(section, subjectId) {
+  const row = section.matrix[subjectId]
   if (!row) return 0
-  return expenseTypes.value.filter((t) => row[t.id] > 0).length
+  return section.expense_types.filter((t) => row[t.id] > 0).length
 }
 
-// How many subjects have at least one expense of a given type.
-function subjectsCovered(typeId) {
-  return subjects.value.filter((s) => cellCount(s.id, typeId) > 0).length
+function subjectsCovered(section, typeId) {
+  return section.subjects.filter((s) => cellCount(section, s.id, typeId) > 0).length
 }
 
-const totalCells = computed(() => subjects.value.length * expenseTypes.value.length)
-const filledCells = computed(() =>
-  subjects.value.reduce((acc, s) => acc + typesCovered(s.id), 0),
-)
-const gapCount = computed(() => totalCells.value - filledCells.value)
+function outsideSummary(section, subjectId) {
+  const extra = section.outside?.[subjectId]
+  if (!extra) return ''
+  return Object.entries(extra).map(([name, n]) => (n > 1 ? `${name} ×${n}` : name)).join(', ')
+}
+
+function stats(section) {
+  const total = section.subjects.length * section.expense_types.length
+  const filled = section.subjects.reduce((acc, s) => acc + typesCovered(section, s.id), 0)
+  return { total, filled, gaps: total - filled }
+}
+
+const overall = computed(() => {
+  const typed = sections.value.filter((s) => s.subject_type)
+  return typed.reduce((acc, s) => {
+    const st = stats(s)
+    return { total: acc.total + st.total, filled: acc.filled + st.filled, gaps: acc.gaps + st.gaps }
+  }, { total: 0, filled: 0, gaps: 0 })
+})
+
+function sectionTitle(section) {
+  return section.subject_type ? section.subject_type.name : 'Untyped subjects'
+}
 </script>
 
 <template>
@@ -59,83 +73,102 @@ const gapCount = computed(() => totalCells.value - filledCells.value)
     </div>
 
     <p class="text-muted mb-4 page-intro">
-      Which subjects have which expense types. A check marks an existing active
-      expense; empty cells are gaps where you may still need to add one.
+      One section per subject type, showing only the categories that apply to it. A check marks an
+      existing active expense; empty cells are gaps. Define types and their categories under
+      <RouterLink to="/settings">Settings</RouterLink>.
     </p>
 
     <div v-if="error" class="alert alert-danger mb-4">{{ error }}</div>
 
     <div v-if="loading" class="loading-spinner">Loading...</div>
 
-    <div v-else-if="!subjects.length || !expenseTypes.length" class="empty-state">
+    <div v-else-if="!sections.length" class="empty-state">
       <h3>Nothing to compare yet</h3>
       <p>
-        You need at least one subject and one expense type before a grid can be
-        built. Add them under
+        Add subjects and give them a type under
         <RouterLink to="/settings">Settings</RouterLink>.
       </p>
     </div>
 
     <template v-else>
-      <!-- Headline stats -->
+      <!-- Headline stats across typed sections -->
       <div class="grid-3 mb-4">
         <div class="card">
           <div class="card-body">
-            <p class="text-sm text-muted">Subjects × Types</p>
-            <p class="summary-stat">{{ subjects.length }} × {{ expenseTypes.length }}</p>
+            <p class="text-sm text-muted">Expected combinations</p>
+            <p class="summary-stat">{{ overall.total }}</p>
           </div>
         </div>
         <div class="card">
           <div class="card-body">
-            <p class="text-sm text-muted">Combinations covered</p>
-            <p class="summary-stat">{{ filledCells }} / {{ totalCells }}</p>
+            <p class="text-sm text-muted">Covered</p>
+            <p class="summary-stat">{{ overall.filled }} / {{ overall.total }}</p>
           </div>
         </div>
         <div class="card">
           <div class="card-body">
-            <p class="text-sm text-muted">Empty combinations</p>
-            <p class="summary-stat" :class="{ 'stat-gap': gapCount > 0 }">{{ gapCount }}</p>
+            <p class="text-sm text-muted">Gaps</p>
+            <p class="summary-stat" :class="{ 'stat-gap': overall.gaps > 0 }">{{ overall.gaps }}</p>
           </div>
         </div>
       </div>
 
-      <!-- Coverage matrix -->
-      <div class="card">
-        <div class="table-wrapper">
+      <!-- One grid per section -->
+      <div v-for="section in sections" :key="section.subject_type ? section.subject_type.id : 'untyped'" class="card mb-4">
+        <div class="card-header">
+          <h3>{{ sectionTitle(section) }}</h3>
+          <span class="text-xs text-muted">
+            <template v-if="section.subject_type">
+              {{ section.subjects.length }} subject{{ section.subjects.length === 1 ? '' : 's' }} ×
+              {{ section.expense_types.length }} categor{{ section.expense_types.length === 1 ? 'y' : 'ies' }} ·
+              {{ stats(section).gaps }} gap{{ stats(section).gaps === 1 ? '' : 's' }}
+            </template>
+            <template v-else>no type assigned — shown against every category</template>
+          </span>
+        </div>
+        <div v-if="!section.expense_types.length" class="empty-state">
+          <p>No categories are marked as applicable to this type yet. Edit it in Settings.</p>
+        </div>
+        <div v-else class="table-wrapper">
           <table class="coverage-table">
             <thead>
               <tr>
                 <th class="corner">Subject</th>
-                <th v-for="t in expenseTypes" :key="t.id">{{ t.name }}</th>
+                <th v-for="t in section.expense_types" :key="t.id">{{ t.name }}</th>
                 <th class="text-right">Covered</th>
+                <th>Outside type</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="s in subjects" :key="s.id">
+              <tr v-for="s in section.subjects" :key="s.id">
                 <th scope="row" class="subject-col">{{ s.name }}</th>
                 <td
-                  v-for="t in expenseTypes"
+                  v-for="t in section.expense_types"
                   :key="t.id"
                   class="cell"
-                  :class="cellCount(s.id, t.id) ? 'cell-filled' : 'cell-gap'"
-                  :title="`${s.name} — ${t.name}: ${cellCount(s.id, t.id) || 'no expense'}`"
+                  :class="cellCount(section, s.id, t.id) ? 'cell-filled' : 'cell-gap'"
+                  :title="`${s.name} — ${t.name}: ${cellCount(section, s.id, t.id) || 'no expense'}`"
                 >
-                  <span v-if="cellCount(s.id, t.id)">
-                    ✓<span v-if="cellCount(s.id, t.id) > 1" class="cell-count">{{ cellCount(s.id, t.id) }}</span>
+                  <span v-if="cellCount(section, s.id, t.id)">
+                    ✓<span v-if="cellCount(section, s.id, t.id) > 1" class="cell-count">{{ cellCount(section, s.id, t.id) }}</span>
                   </span>
                   <span v-else class="gap-dash">—</span>
                 </td>
                 <td class="text-right text-sm text-muted">
-                  {{ typesCovered(s.id) }}/{{ expenseTypes.length }}
+                  {{ typesCovered(section, s.id) }}/{{ section.expense_types.length }}
+                </td>
+                <td class="text-xs text-muted" :title="outsideSummary(section, s.id) ? 'Active expenses in categories not marked for this type' : ''">
+                  {{ outsideSummary(section, s.id) || '' }}
                 </td>
               </tr>
             </tbody>
             <tfoot>
               <tr>
                 <th scope="row" class="subject-col text-muted">Subjects covered</th>
-                <td v-for="t in expenseTypes" :key="t.id" class="cell text-sm text-muted">
-                  {{ subjectsCovered(t.id) }}/{{ subjects.length }}
+                <td v-for="t in section.expense_types" :key="t.id" class="cell text-sm text-muted">
+                  {{ subjectsCovered(section, t.id) }}/{{ section.subjects.length }}
                 </td>
+                <td></td>
                 <td></td>
               </tr>
             </tfoot>
@@ -143,7 +176,7 @@ const gapCount = computed(() => totalCells.value - filledCells.value)
         </div>
       </div>
 
-      <!-- Expenses that can't be placed in the grid -->
+      <!-- Expenses that can't be placed in any grid -->
       <p
         v-if="data.unassigned.no_subject || data.unassigned.no_type"
         class="text-sm text-muted mt-4"
@@ -152,9 +185,9 @@ const gapCount = computed(() => totalCells.value - filledCells.value)
           {{ data.unassigned.no_subject }} active expense(s) have no subject assigned.
         </template>
         <template v-if="data.unassigned.no_type">
-          {{ data.unassigned.no_type }} active expense(s) have no expense type assigned.
+          {{ data.unassigned.no_type }} active expense(s) have no category assigned.
         </template>
-        These are not shown in the grid above.
+        These are not shown in the grids above.
       </p>
     </template>
   </div>

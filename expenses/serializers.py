@@ -5,7 +5,7 @@ from rest_framework import serializers
 from activity.services import ActivityLoggedSerializerMixin
 
 from .models import (
-    Subject, ExpenseType, PaymentMethod, PaymentAccount, Expense, Occurrence,
+    SubjectType, Subject, ExpenseType, PaymentMethod, PaymentAccount, Expense, Occurrence,
 )
 
 
@@ -33,13 +33,36 @@ def validate_payment_account_rule(attrs, instance=None):
     return attrs
 
 
+class SubjectTypeSerializer(ActivityLoggedSerializerMixin, serializers.ModelSerializer):
+    activity_entity = 'subject_type'
+    activity_fields = {'name': 'name', 'categories': 'expense_type_names'}
+    expense_types = serializers.PrimaryKeyRelatedField(
+        queryset=ExpenseType.objects.all(), many=True, required=False,
+    )
+    expense_type_names = serializers.SerializerMethodField()
+    subject_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SubjectType
+        fields = ['id', 'name', 'expense_types', 'expense_type_names', 'subject_count',
+                  'is_default', 'created_by']
+        read_only_fields = ['id', 'is_default', 'created_by']
+
+    def get_expense_type_names(self, obj):
+        return [t.name for t in obj.expense_types.order_by('name')]
+
+    def get_subject_count(self, obj):
+        return obj.subjects.count()
+
+
 class SubjectSerializer(ActivityLoggedSerializerMixin, serializers.ModelSerializer):
     activity_entity = 'subject'
-    activity_fields = {'name': 'name'}
+    activity_fields = {'name': 'name', 'type': 'subject_type_name'}
+    subject_type_name = serializers.CharField(source='subject_type.name', read_only=True, default=None)
 
     class Meta:
         model = Subject
-        fields = ['id', 'name', 'is_default', 'created_by']
+        fields = ['id', 'name', 'subject_type', 'subject_type_name', 'is_default', 'created_by']
         read_only_fields = ['id', 'is_default', 'created_by']
 
 

@@ -18,10 +18,16 @@ const success = ref('')
 const error = ref('')
 const loading = ref(false)
 
+// Subject Type management (which categories apply to a kind of subject)
+const showSubjectTypeForm = ref(false)
+const editingSubjectTypeId = ref(null)
+const subjectTypeForm = ref({ name: '', expense_types: [] })
+const subjectTypeError = ref('')
+
 // Subject management
 const showSubjectForm = ref(false)
 const editingSubjectId = ref(null)
-const subjectForm = ref({ name: '' })
+const subjectForm = ref({ name: '', subject_type: '' })
 const subjectError = ref('')
 
 // Expense Type management
@@ -81,6 +87,7 @@ onMounted(() => {
     form.value.last_name = auth.user.last_name || ''
     form.value.username = auth.user.username || ''
   }
+  store.fetchSubjectTypes()
   store.fetchSubjects()
   store.fetchExpenseTypes()
   store.fetchPaymentMethods()
@@ -113,28 +120,69 @@ async function handleSave() {
   }
 }
 
+// Subject Type CRUD
+function openCreateSubjectType() {
+  editingSubjectTypeId.value = null
+  subjectTypeForm.value = { name: '', expense_types: [] }
+  subjectTypeError.value = ''
+  showSubjectTypeForm.value = true
+}
+
+function openEditSubjectType(st) {
+  editingSubjectTypeId.value = st.id
+  subjectTypeForm.value = { name: st.name, expense_types: [...st.expense_types] }
+  subjectTypeError.value = ''
+  showSubjectTypeForm.value = true
+}
+
+async function handleSubjectTypeSubmit() {
+  subjectTypeError.value = ''
+  try {
+    if (editingSubjectTypeId.value) {
+      await store.updateSubjectType(editingSubjectTypeId.value, subjectTypeForm.value)
+    } else {
+      await store.createSubjectType(subjectTypeForm.value)
+    }
+    showSubjectTypeForm.value = false
+    store.fetchSubjects()
+  } catch (e) {
+    const data = e.response?.data
+    subjectTypeError.value = data && typeof data === 'object' ? Object.values(data).flat().join(' ') : 'Failed to save subject type.'
+  }
+}
+
+async function handleDeleteSubjectType(st) {
+  if (!confirm(`Delete subject type "${st.name}"?`)) return
+  try {
+    await store.deleteSubjectType(st.id)
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Cannot delete this subject type.')
+  }
+}
+
 // Subject CRUD
 function openCreateSubject() {
   editingSubjectId.value = null
-  subjectForm.value = { name: '' }
+  subjectForm.value = { name: '', subject_type: '' }
   subjectError.value = ''
   showSubjectForm.value = true
 }
 
 function openEditSubject(subject) {
   editingSubjectId.value = subject.id
-  subjectForm.value = { name: subject.name }
+  subjectForm.value = { name: subject.name, subject_type: subject.subject_type || '' }
   subjectError.value = ''
   showSubjectForm.value = true
 }
 
 async function handleSubjectSubmit() {
   subjectError.value = ''
+  const payload = { ...subjectForm.value, subject_type: subjectForm.value.subject_type || null }
   try {
     if (editingSubjectId.value) {
-      await store.updateSubject(editingSubjectId.value, subjectForm.value)
+      await store.updateSubject(editingSubjectId.value, payload)
     } else {
-      await store.createSubject(subjectForm.value)
+      await store.createSubject(payload)
     }
     showSubjectForm.value = false
   } catch (e) {
@@ -669,6 +717,44 @@ function varTag(name) {
       </div>
     </div>
 
+    <!-- Subject Types -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <h3>Subject Types</h3>
+        <button @click="openCreateSubjectType" class="btn btn-sm btn-primary">+ New Type</button>
+      </div>
+      <div class="card-body" style="padding:0">
+        <p class="text-sm text-muted" style="padding:0.75rem 1rem 0">
+          A kind of subject (Property, Vehicle, Person…) and the categories that apply to it. The Coverage
+          grid shows one section per type, with only those categories.
+        </p>
+        <div v-if="!store.subjectTypes.length" class="empty-state">
+          <p>No subject types yet.</p>
+        </div>
+        <table v-else>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Applicable categories</th>
+              <th>Subjects</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="st in store.subjectTypes" :key="st.id">
+              <td style="font-weight:500">{{ st.name }} <span v-if="st.is_default" class="text-xs text-muted">· default</span></td>
+              <td class="text-sm">{{ st.expense_type_names.length ? st.expense_type_names.join(', ') : '—' }}</td>
+              <td class="text-sm text-muted">{{ st.subject_count }}</td>
+              <td class="text-right">
+                <button @click="openEditSubjectType(st)" class="btn btn-sm btn-outline">Edit</button>
+                <button v-if="!st.is_default" @click="handleDeleteSubjectType(st)" class="btn btn-sm btn-outline" style="margin-left:0.25rem; color:var(--color-danger)">Delete</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Subjects -->
     <div class="card mb-4">
       <div class="card-header">
@@ -691,7 +777,8 @@ function varTag(name) {
             <tr v-for="subject in store.subjects" :key="subject.id">
               <td style="font-weight:500">{{ subject.name }}</td>
               <td>
-                <span class="text-sm text-muted">{{ subject.is_default ? 'Default' : 'Custom' }}</span>
+                <span class="text-sm">{{ subject.subject_type_name || '—' }}</span>
+                <span class="text-xs text-muted"> · {{ subject.is_default ? 'Default' : 'Custom' }}</span>
               </td>
               <td class="text-right">
                 <button @click="openEditSubject(subject)" class="btn btn-sm btn-outline">Edit</button>
@@ -1034,6 +1121,39 @@ function varTag(name) {
       </div>
     </div>
 
+    <!-- Subject Type Form Modal -->
+    <div v-if="showSubjectTypeForm" class="modal-overlay" @click.self="showSubjectTypeForm = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>{{ editingSubjectTypeId ? 'Edit Subject Type' : 'New Subject Type' }}</h3>
+          <button @click="showSubjectTypeForm = false" class="btn btn-sm btn-outline">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div v-if="subjectTypeError" class="alert alert-danger">{{ subjectTypeError }}</div>
+          <form @submit.prevent="handleSubjectTypeSubmit">
+            <div class="form-group">
+              <label class="form-label">Name</label>
+              <input v-model="subjectTypeForm.name" type="text" class="form-input" placeholder="e.g. Property, Vehicle, Person" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Applicable categories</label>
+              <p v-if="!store.expenseTypes.length" class="text-sm text-muted">No expense types yet.</p>
+              <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:0.375rem">
+                <label v-for="et in store.expenseTypes" :key="et.id" class="text-sm" style="display:flex; align-items:center; gap:0.375rem; cursor:pointer">
+                  <input v-model="subjectTypeForm.expense_types" type="checkbox" :value="et.id" /> {{ et.name }}
+                </label>
+              </div>
+              <p class="text-xs text-muted mt-1">Coverage will expect each subject of this type to have an expense in every ticked category.</p>
+            </div>
+            <div class="modal-footer" style="padding:0; border:none; margin-top:1rem">
+              <button type="button" class="btn btn-outline" @click="showSubjectTypeForm = false">Cancel</button>
+              <button type="submit" class="btn btn-primary">{{ editingSubjectTypeId ? 'Update' : 'Create' }}</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
     <!-- Subject Form Modal -->
     <div v-if="showSubjectForm" class="modal-overlay" @click.self="showSubjectForm = false">
       <div class="modal">
@@ -1047,6 +1167,13 @@ function varTag(name) {
             <div class="form-group">
               <label class="form-label">Name</label>
               <input v-model="subjectForm.name" type="text" class="form-input" placeholder="e.g. 42 Oak Street, Toyota Corolla" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Type <span class="text-muted text-xs">(decides which categories Coverage expects)</span></label>
+              <select v-model="subjectForm.subject_type" class="form-select">
+                <option value="">None</option>
+                <option v-for="st in store.subjectTypes" :key="st.id" :value="st.id">{{ st.name }}</option>
+              </select>
             </div>
             <div class="modal-footer" style="padding:0; border:none; margin-top:1rem">
               <button type="button" class="btn btn-outline" @click="showSubjectForm = false">Cancel</button>

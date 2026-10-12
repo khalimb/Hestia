@@ -3,10 +3,42 @@ from django.conf import settings
 from django.db import models
 
 
+class SubjectType(models.Model):
+    """Kind of subject (Property, Vehicle, Person…) and which categories apply
+    to it. Drives the coverage grid: each type gets its own section showing
+    only the categories that make sense for its subjects."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, unique=True)
+    expense_types = models.ManyToManyField(
+        'ExpenseType', blank=True, related_name='subject_types',
+    )
+    is_default = models.BooleanField(default=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='subject_types',
+    )
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    def deletion_blocker(self):
+        if self.is_default:
+            return 'Default subject types cannot be deleted.'
+        if self.subjects.exists():
+            return 'Cannot delete a subject type that still has subjects; reassign them first.'
+        return None
+
+
 class Subject(models.Model):
     """Configurable subject/entity that an expense relates to, e.g. an apartment or car."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100, unique=True)
+    subject_type = models.ForeignKey(
+        SubjectType, on_delete=models.SET_NULL, null=True, blank=True, related_name='subjects',
+    )
     is_default = models.BooleanField(default=False)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,

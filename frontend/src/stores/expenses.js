@@ -5,6 +5,7 @@ import api from '../api/axios'
 export const useExpenseStore = defineStore('expenses', () => {
   const expenses = ref([])
   const subjects = ref([])
+  const subjectTypes = ref([])
   const expenseTypes = ref([])
   const paymentMethods = ref([])
   const paymentAccounts = ref([])
@@ -23,6 +24,33 @@ export const useExpenseStore = defineStore('expenses', () => {
     } finally {
       loading.value = false
     }
+  }
+
+  async function fetchSubjectTypes() {
+    try {
+      const { data } = await api.get('subject-types/')
+      subjectTypes.value = data.results || data
+    } catch (e) {
+      error.value = e.response?.data || 'Failed to fetch subject types'
+    }
+  }
+
+  async function createSubjectType(typeData) {
+    const { data } = await api.post('subject-types/', typeData)
+    subjectTypes.value.push(data)
+    return data
+  }
+
+  async function updateSubjectType(id, typeData) {
+    const { data } = await api.patch(`subject-types/${id}/`, typeData)
+    const idx = subjectTypes.value.findIndex((t) => t.id === id)
+    if (idx !== -1) subjectTypes.value[idx] = data
+    return data
+  }
+
+  async function deleteSubjectType(id) {
+    await api.delete(`subject-types/${id}/`)
+    subjectTypes.value = subjectTypes.value.filter((t) => t.id !== id)
   }
 
   async function fetchSubjects() {
@@ -166,8 +194,9 @@ export const useExpenseStore = defineStore('expenses', () => {
   }
 
   return {
-    expenses, subjects, expenseTypes, paymentMethods, paymentAccounts, users, loading, error,
-    fetchExpenses, fetchSubjects, fetchExpenseTypes,
+    expenses, subjects, subjectTypes, expenseTypes, paymentMethods, paymentAccounts, users, loading, error,
+    fetchExpenses, fetchSubjects, fetchSubjectTypes, fetchExpenseTypes,
+    createSubjectType, updateSubjectType, deleteSubjectType,
     fetchPaymentMethods, fetchPaymentAccounts, fetchUsers,
     createExpense, updateExpense, deleteExpense,
     createSubject, updateSubject, deleteSubject,

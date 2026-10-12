@@ -252,3 +252,47 @@ class BreakdownItemsTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
         resp = self.client.get(reverse('dashboard-analytics-items'), {**base, 'group': 'category', 'id': 'not-a-uuid'})
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class CoverageSectionsTests(APITestCase):
+    def setUp(self):
+        from expenses.models import SubjectType, Subject
+        self.user = User.objects.create_user(
+            email='bk@example.com', username='bk', first_name='B', password='supersecret123')
+        self.rent = ExpenseType.objects.create(name='Rent')
+        self.water = ExpenseType.objects.create(name='Water')
+        self.takeaway = ExpenseType.objects.create(name='Takeaway')
+        self.property = SubjectType.objects.create(name='Property')
+        self.property.expense_types.set([self.rent, self.water])
+        self.flat = Subject.objects.create(name='Flat', subject_type=self.property)
+        self.cabin = Subject.objects.create(name='Cabin', subject_type=self.property)
+        self.untyped = Subject.objects.create(name='Mystery')
+        SubjectType.objects.create(name='Person')   # no subjects: must not produce a section
+        def expense(name, subject, etype, active=True):
+            return Expense.objects.create(name=name, amount='10', currency='GBP', recurrence_type='monthly',
+                                          start_date=date(2026, 9, 1), subject=subject, expense_type=etype,
+                                          is_active=active, created_by=self.user)
+        expense('Flat rent', self.flat, self.rent)
+        expense('Flat water', self.flat, self.water)
+        expense('Flat pizza habit', self.flat, self.takeaway)          # outside Property's categories
+        expense('Old cabin rent', self.cabin, self.rent, active=False)  # inactive: not counted
+        expense('Mystery water', self.untyped, self.water)
+        expense('No subject', None, self.rent)
+        self.client.force_authenticate(self.user)
+
+    def test_sections_per_type_with_outside_counts_and_untyped_section(self):
+        resp = self.client.get(reverse('dashboard-coverage'))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        sections = resp.data['sections']
+        self.assertEqual([s['subject_type']['name'] if s['subject_type'] else None for s in sections],
+                         ['Property', None])
+        prop = sections[0]
+        self.assertEqual([t['name'] for t in prop['expense_types']], ['Rent', 'Water'])   # only applicable ones
+        self.assertEqual([s['name'] for s in prop['subjects']], ['Cabin', 'Flat'])
+        self.assertEqual(prop['matrix'][str(self.flat.id)], {str(self.rent.id): 1, str(self.water.id): 1})
+        self.assertEqual(prop['matrix'][str(self.cabin.id)], {})                          # inactive ignored
+        self.assertEqual(prop['outside'], {str(self.flat.id): {'Takeaway': 1}})
+        untyped = sections[1]
+        self.assertEqual([t['name'] for t in untyped['expense_types']], ['Rent', 'Takeaway', 'Water'])  # all
+        self.assertEqual(untyped['matrix'][str(self.untyped.id)], {str(self.water.id): 1})
+        self.assertEqual(resp.data['unassigned'], {'no_subject': 1, 'no_type': 0})

@@ -7,10 +7,10 @@ from django_filters.rest_framework import DjangoFilterBackend
 from activity.services import delete_logged
 
 from .models import (
-    Subject, ExpenseType, PaymentMethod, PaymentAccount, Expense, Occurrence,
+    SubjectType, Subject, ExpenseType, PaymentMethod, PaymentAccount, Expense, Occurrence,
 )
 from .serializers import (
-    SubjectSerializer, ExpenseTypeSerializer, PaymentMethodSerializer,
+    SubjectTypeSerializer, SubjectSerializer, ExpenseTypeSerializer, PaymentMethodSerializer,
     PaymentAccountSerializer, ExpenseSerializer, ExpenseDetailSerializer,
     OccurrenceSerializer,
 )
@@ -31,8 +31,16 @@ class GuardedDeleteMixin:
         delete_logged(self.get_serializer_class(), instance)
 
 
+class SubjectTypeViewSet(GuardedDeleteMixin, viewsets.ModelViewSet):
+    queryset = SubjectType.objects.prefetch_related('expense_types').all()
+    serializer_class = SubjectTypeSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
 class SubjectViewSet(GuardedDeleteMixin, viewsets.ModelViewSet):
-    queryset = Subject.objects.all()
+    queryset = Subject.objects.select_related('subject_type').all()
     serializer_class = SubjectSerializer
 
     def perform_create(self, serializer):

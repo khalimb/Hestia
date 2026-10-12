@@ -176,3 +176,50 @@ class DictionaryDeleteGuardTests(PaymentAttributesTestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
         self.assertEqual(resp.data['created_by'], self.user.id)
+
+
+from .models import SubjectType, Subject, ExpenseType
+
+
+class SubjectTypeTests(PaymentAttributesTestCase):
+    def setUp(self):
+        super().setUp()
+        self.rent = ExpenseType.objects.create(name='Rent')
+        self.water = ExpenseType.objects.create(name='Water')
+        self.takeaway = ExpenseType.objects.create(name='Takeaway')
+
+    def test_create_type_with_categories_and_assign_subject(self):
+        resp = self.client.post(reverse('subjecttype-list'), {
+            'name': 'Property', 'expense_types': [str(self.rent.id), str(self.water.id)]}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        self.assertEqual(resp.data['expense_type_names'], ['Rent', 'Water'])
+        self.assertEqual(resp.data['subject_count'], 0)
+        type_id = resp.data['id']
+        resp = self.client.post(reverse('subject-list'), {'name': '42 Oak Street', 'subject_type': type_id}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        self.assertEqual(resp.data['subject_type_name'], 'Property')
+        # Editing the category list and renaming are logged with names, not ids.
+        resp = self.client.patch(reverse('subjecttype-detail', args=[type_id]),
+                                 {'expense_types': [str(self.rent.id)]}, format='json')
+        self.assertEqual(resp.data['expense_type_names'], ['Rent'])
+        from activity.models import ActivityLog
+        row = ActivityLog.objects.get(entity_type='subject_type', action='update')
+        self.assertEqual(row.changes['categories'], {'from': ['Rent', 'Water'], 'to': ['Rent']})
+
+    def test_delete_guards(self):
+        default = SubjectType.objects.create(name='Vehicle', is_default=True)
+        custom = SubjectType.objects.create(name='Boat')
+        Subject.objects.create(name='Dinghy', subject_type=custom)
+        for st, fragment in ((default, 'Default'), (custom, 'still has subjects')):
+            resp = self.client.delete(reverse('subjecttype-detail', args=[st.id]))
+            self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn(fragment, resp.data['detail'])
+        Subject.objects.filter(name='Dinghy').update(subject_type=None)
+        self.assertEqual(self.client.delete(reverse('subjecttype-detail', args=[custom.id])).status_code, 204)
+
+    def test_deleting_subject_type_is_blocked_but_removing_type_keeps_subject(self):
+        st = SubjectType.objects.create(name='Pet')
+        subject = Subject.objects.create(name='Dog', subject_type=st)
+        resp = self.client.patch(reverse('subject-detail', args=[subject.id]), {'subject_type': None}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIsNone(resp.data['subject_type'])

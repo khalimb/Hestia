@@ -15,10 +15,10 @@ from django.db.models import Q
 from django.utils import timezone
 
 from expenses.models import (
-    Subject, ExpenseType, PaymentMethod, PaymentAccount, Expense, Occurrence,
+    SubjectType, Subject, ExpenseType, PaymentMethod, PaymentAccount, Expense, Occurrence,
 )
 from expenses.serializers import (
-    SubjectSerializer, ExpenseTypeSerializer, PaymentMethodSerializer,
+    SubjectTypeSerializer, SubjectSerializer, ExpenseTypeSerializer, PaymentMethodSerializer,
     PaymentAccountSerializer, ExpenseSerializer, ExpenseDetailSerializer,
     OccurrenceSerializer,
 )
@@ -35,6 +35,7 @@ class ToolError(Exception):
 
 
 DICTIONARIES = {
+    'subject_type': (SubjectType, SubjectTypeSerializer),
     'subject': (Subject, SubjectSerializer),
     'expense_type': (ExpenseType, ExpenseTypeSerializer),
     'payment_method': (PaymentMethod, PaymentMethodSerializer),
@@ -112,6 +113,12 @@ def _expense_card(data):
 
 def _dictionary_row(kind, data):
     row = {'id': data['id'], 'name': data['name']}
+    if kind == 'subject_type':
+        row['expense_types'] = [str(t) for t in data.get('expense_types', [])]
+        row['categories'] = data.get('expense_type_names', [])
+    if kind == 'subject':
+        row['subject_type'] = str(data['subject_type']) if data.get('subject_type') else None
+        row['subject_type_name'] = data.get('subject_type_name')
     if kind == 'payment_method':
         row['requires_account'] = data['requires_account']
     if kind == 'payment_account':
@@ -146,7 +153,8 @@ def dictionaries_get(args, user):
     out['recurrence_types'] = [value for value, _ in Expense.RECURRENCE_CHOICES]
     out['default_currency'] = 'GBP'
     out['note'] = ('Use these ids in expenses_apply / transactions_apply. expense_types are '
-                   'the categories for both recurring expenses and one-off transactions. '
+                   'the categories for both recurring expenses and one-off transactions; '
+                   'subject_types list which categories apply to their subjects. '
                    'payment_methods with requires_account=true may carry an account; others must not.')
     return out
 
@@ -591,12 +599,15 @@ TOOLS = [
          'deletes': {'type': 'array', 'items': _UUID}}},
      'handler': transactions_apply},
     {'name': 'dictionary_create',
-     'description': 'WRITE: add a dictionary entry. kind: subject | expense_type | '
-                    'payment_method (name, requires_account) | payment_account '
-                    '(name, notes). Names are unique per kind.',
+     'description': 'WRITE: add a dictionary entry. kind: subject_type (name, expense_types) | '
+                    'subject (name, subject_type) | expense_type | payment_method (name, '
+                    'requires_account) | payment_account (name, notes). Names are unique per kind.',
      'inputSchema': {'type': 'object', 'properties': {
          'kind': _DICT_KIND, 'name': {'type': 'string'},
-         'requires_account': {'type': 'boolean'}, 'notes': {'type': 'string'}},
+         'requires_account': {'type': 'boolean'}, 'notes': {'type': 'string'},
+         'subject_type': {'type': ['string', 'null'], 'description': 'subject only: subject_type id'},
+         'expense_types': {'type': 'array', 'items': _UUID,
+                           'description': 'subject_type only: applicable category ids'}},
                      'required': ['kind', 'name']},
      'handler': dictionary_create},
     {'name': 'dictionary_update',
@@ -604,7 +615,9 @@ TOOLS = [
                     'dictionary_create, by kind + id).',
      'inputSchema': {'type': 'object', 'properties': {
          'kind': _DICT_KIND, 'id': _UUID, 'name': {'type': 'string'},
-         'requires_account': {'type': 'boolean'}, 'notes': {'type': 'string'}},
+         'requires_account': {'type': 'boolean'}, 'notes': {'type': 'string'},
+         'subject_type': {'type': ['string', 'null']},
+         'expense_types': {'type': 'array', 'items': _UUID}},
                      'required': ['kind', 'id']},
      'handler': dictionary_update},
     {'name': 'dictionary_delete',

@@ -9,6 +9,7 @@ python manage.py seed_expense_types || true
 python manage.py seed_categories   || true
 python manage.py seed_subjects     || true
 python manage.py seed_payment_methods || true
+python manage.py seed_subject_types || true
 
 echo "==> Generating occurrences..."
 python manage.py generate_occurrences || true
