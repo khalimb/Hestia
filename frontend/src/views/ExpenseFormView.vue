@@ -130,7 +130,7 @@ async function handleSubmit() {
               <label class="form-label">Subject <span class="text-muted text-xs">(optional)</span></label>
               <select v-model="form.subject" class="form-select">
                 <option value="">None</option>
-                <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ s.name }}</option>
+                <option v-for="s in store.subjects.filter((x) => x.is_active || x.id === form.subject)" :key="s.id" :value="s.id">{{ s.name }}{{ s.is_active ? '' : ' (inactive)' }}</option>
               </select>
             </div>
             <div class="form-group">

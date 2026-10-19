@@ -223,3 +223,20 @@ class SubjectTypeTests(PaymentAttributesTestCase):
         resp = self.client.patch(reverse('subject-detail', args=[subject.id]), {'subject_type': None}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIsNone(resp.data['subject_type'])
+
+
+class SubjectActiveTests(PaymentAttributesTestCase):
+    def test_deactivate_default_subject_keeps_it_and_logs(self):
+        subject = Subject.objects.create(name='42 Oak Street', is_default=True)
+        resp = self.client.patch(reverse('subject-detail', args=[subject.id]), {'is_active': False}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertFalse(resp.data['is_active'])
+        subject.refresh_from_db()
+        self.assertTrue(subject.is_default)                                  # still undeletable, just inactive
+        from activity.models import ActivityLog
+        self.assertEqual(ActivityLog.objects.get(entity_type='subject', action='update').changes,
+                         {'is_active': {'from': True, 'to': False}})
+        resp = self.client.get(reverse('subject-list'), {'is_active': 'true'})
+        self.assertNotIn('42 Oak Street', [s['name'] for s in resp.data['results']])
+        resp = self.client.get(reverse('subject-list'))
+        self.assertIn('42 Oak Street', [s['name'] for s in resp.data['results']])  # still listed for Settings

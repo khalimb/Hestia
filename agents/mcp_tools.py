@@ -119,6 +119,7 @@ def _dictionary_row(kind, data):
     if kind == 'subject':
         row['subject_type'] = str(data['subject_type']) if data.get('subject_type') else None
         row['subject_type_name'] = data.get('subject_type_name')
+        row['is_active'] = data.get('is_active', True)
     if kind == 'payment_method':
         row['requires_account'] = data['requires_account']
     if kind == 'payment_account':
@@ -606,6 +607,7 @@ TOOLS = [
          'kind': _DICT_KIND, 'name': {'type': 'string'},
          'requires_account': {'type': 'boolean'}, 'notes': {'type': 'string'},
          'subject_type': {'type': ['string', 'null'], 'description': 'subject only: subject_type id'},
+         'is_active': {'type': 'boolean', 'description': 'subject only: false retires it'},
          'expense_types': {'type': 'array', 'items': _UUID,
                            'description': 'subject_type only: applicable category ids'}},
                      'required': ['kind', 'name']},
@@ -616,7 +618,7 @@ TOOLS = [
      'inputSchema': {'type': 'object', 'properties': {
          'kind': _DICT_KIND, 'id': _UUID, 'name': {'type': 'string'},
          'requires_account': {'type': 'boolean'}, 'notes': {'type': 'string'},
-         'subject_type': {'type': ['string', 'null']},
+         'subject_type': {'type': ['string', 'null']}, 'is_active': {'type': 'boolean'},
          'expense_types': {'type': 'array', 'items': _UUID}},
                      'required': ['kind', 'id']},
      'handler': dictionary_update},

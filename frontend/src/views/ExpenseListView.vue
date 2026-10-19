@@ -85,7 +85,7 @@ async function handleDelete(expense) {
         <div class="form-group" style="margin:0; flex:1">
           <select v-model="filterSubject" class="form-select" @change="applyFilters">
             <option value="">All Subjects</option>
-            <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ s.name }}</option>
+            <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ s.name }}{{ s.is_active ? '' : ' (inactive)' }}</option>
           </select>
         </div>
         <div class="form-group" style="margin:0; flex:1">

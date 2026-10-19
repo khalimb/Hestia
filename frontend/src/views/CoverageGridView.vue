@@ -28,10 +28,60 @@ function cellCount(section, subjectId, typeId) {
   return section.matrix[subjectId]?.[typeId] || 0
 }
 
+// Manual mark on an empty cell: 'in_progress' | 'not_needed' | undefined.
+function cellMark(section, subjectId, typeId) {
+  return section.marks?.[subjectId]?.[typeId]
+}
+
+// Click cycles an empty cell: none → in progress → not needed → none.
+const NEXT_MARK = { undefined: 'in_progress', in_progress: 'not_needed', not_needed: null }
+const marking = ref(new Set())
+
+async function cycleMark(section, subject, type) {
+  if (cellCount(section, subject.id, type.id)) return   // a real expense: nothing to mark
+  const key = `${subject.id}:${type.id}`
+  if (marking.value.has(key)) return
+  const current = cellMark(section, subject.id, type.id)
+  const next = NEXT_MARK[current]
+  marking.value.add(key)
+  try {
+    await api.post('dashboard/coverage/mark/', { subject: subject.id, expense_type: type.id, status: next })
+    if (!section.marks) section.marks = {}
+    if (!section.marks[subject.id]) section.marks[subject.id] = {}
+    if (next) section.marks[subject.id][type.id] = next
+    else delete section.marks[subject.id][type.id]
+  } catch (e) {
+    error.value = e.response?.data?.detail || 'Failed to save the mark.'
+  } finally {
+    marking.value.delete(key)
+  }
+}
+
+function cellClass(section, subjectId, typeId) {
+  if (cellCount(section, subjectId, typeId)) return 'cell-filled'
+  const mark = cellMark(section, subjectId, typeId)
+  if (mark === 'in_progress') return 'cell-progress'
+  if (mark === 'not_needed') return 'cell-not-needed'
+  return 'cell-gap'
+}
+
+function cellTitle(section, subject, type) {
+  const n = cellCount(section, subject.id, type.id)
+  if (n) return `${subject.name} — ${type.name}: ${n} active expense${n > 1 ? 's' : ''}`
+  const mark = cellMark(section, subject.id, type.id)
+  const state = mark === 'in_progress' ? 'in progress (will be entered soon)' : mark === 'not_needed' ? 'not needed' : 'gap'
+  return `${subject.name} — ${type.name}: ${state}. Click to change.`
+}
+
 function typesCovered(section, subjectId) {
   const row = section.matrix[subjectId]
   if (!row) return 0
   return section.expense_types.filter((t) => row[t.id] > 0).length
+}
+
+// Cells that count as expected for a subject: all categories minus those marked not needed.
+function typesExpected(section, subjectId) {
+  return section.expense_types.filter((t) => cellMark(section, subjectId, t.id) !== 'not_needed').length
 }
 
 function subjectsCovered(section, typeId) {
@@ -45,17 +95,26 @@ function outsideSummary(section, subjectId) {
 }
 
 function stats(section) {
-  const total = section.subjects.length * section.expense_types.length
-  const filled = section.subjects.reduce((acc, s) => acc + typesCovered(section, s.id), 0)
-  return { total, filled, gaps: total - filled }
+  let expected = 0, filled = 0, progress = 0
+  for (const s of section.subjects) {
+    for (const t of section.expense_types) {
+      const mark = cellMark(section, s.id, t.id)
+      if (cellCount(section, s.id, t.id)) { expected += 1; filled += 1 }
+      else if (mark === 'not_needed') { /* excluded from expectations */ }
+      else if (mark === 'in_progress') { expected += 1; progress += 1 }
+      else expected += 1
+    }
+  }
+  return { expected, filled, progress, gaps: expected - filled - progress }
 }
 
 const overall = computed(() => {
   const typed = sections.value.filter((s) => s.subject_type)
   return typed.reduce((acc, s) => {
     const st = stats(s)
-    return { total: acc.total + st.total, filled: acc.filled + st.filled, gaps: acc.gaps + st.gaps }
-  }, { total: 0, filled: 0, gaps: 0 })
+    return { expected: acc.expected + st.expected, filled: acc.filled + st.filled,
+             progress: acc.progress + st.progress, gaps: acc.gaps + st.gaps }
+  }, { expected: 0, filled: 0, progress: 0, gaps: 0 })
 })
 
 function sectionTitle(section) {
@@ -73,9 +132,14 @@ function sectionTitle(section) {
     </div>
 
     <p class="text-muted mb-4 page-intro">
-      One section per subject type, showing only the categories that apply to it. A check marks an
-      existing active expense; empty cells are gaps. Define types and their categories under
-      <RouterLink to="/settings">Settings</RouterLink>.
+      One section per subject type, showing only the categories that apply to it. Define types and their
+      categories under <RouterLink to="/settings">Settings</RouterLink>. Click an empty cell to mark it.
+    </p>
+    <p class="text-sm mb-4 legend">
+      <span class="legend-item"><span class="swatch cell-filled">✓</span> active expense</span>
+      <span class="legend-item"><span class="swatch cell-progress">~</span> in progress, will be entered soon</span>
+      <span class="legend-item"><span class="swatch cell-not-needed">×</span> not needed</span>
+      <span class="legend-item"><span class="swatch cell-gap">—</span> gap</span>
     </p>
 
     <div v-if="error" class="alert alert-danger mb-4">{{ error }}</div>
@@ -95,14 +159,15 @@ function sectionTitle(section) {
       <div class="grid-3 mb-4">
         <div class="card">
           <div class="card-body">
-            <p class="text-sm text-muted">Expected combinations</p>
-            <p class="summary-stat">{{ overall.total }}</p>
+            <p class="text-sm text-muted">Covered</p>
+            <p class="summary-stat">{{ overall.filled }} / {{ overall.expected }}</p>
+            <p class="text-xs text-muted">expected combinations, excluding "not needed"</p>
           </div>
         </div>
         <div class="card">
           <div class="card-body">
-            <p class="text-sm text-muted">Covered</p>
-            <p class="summary-stat">{{ overall.filled }} / {{ overall.total }}</p>
+            <p class="text-sm text-muted">In progress</p>
+            <p class="summary-stat stat-progress">{{ overall.progress }}</p>
           </div>
         </div>
         <div class="card">
@@ -121,7 +186,7 @@ function sectionTitle(section) {
             <template v-if="section.subject_type">
               {{ section.subjects.length }} subject{{ section.subjects.length === 1 ? '' : 's' }} ×
               {{ section.expense_types.length }} categor{{ section.expense_types.length === 1 ? 'y' : 'ies' }} ·
-              {{ stats(section).gaps }} gap{{ stats(section).gaps === 1 ? '' : 's' }}
+              {{ stats(section).gaps }} gap{{ stats(section).gaps === 1 ? '' : 's' }}<template v-if="stats(section).progress"> · {{ stats(section).progress }} in progress</template>
             </template>
             <template v-else>no type assigned — shown against every category</template>
           </span>
@@ -146,16 +211,19 @@ function sectionTitle(section) {
                   v-for="t in section.expense_types"
                   :key="t.id"
                   class="cell"
-                  :class="cellCount(section, s.id, t.id) ? 'cell-filled' : 'cell-gap'"
-                  :title="`${s.name} — ${t.name}: ${cellCount(section, s.id, t.id) || 'no expense'}`"
+                  :class="[cellClass(section, s.id, t.id), cellCount(section, s.id, t.id) ? '' : 'cell-clickable']"
+                  :title="cellTitle(section, s, t)"
+                  @click="cycleMark(section, s, t)"
                 >
                   <span v-if="cellCount(section, s.id, t.id)">
                     ✓<span v-if="cellCount(section, s.id, t.id) > 1" class="cell-count">{{ cellCount(section, s.id, t.id) }}</span>
                   </span>
+                  <span v-else-if="cellMark(section, s.id, t.id) === 'in_progress'">~</span>
+                  <span v-else-if="cellMark(section, s.id, t.id) === 'not_needed'">×</span>
                   <span v-else class="gap-dash">—</span>
                 </td>
                 <td class="text-right text-sm text-muted">
-                  {{ typesCovered(section, s.id) }}/{{ section.expense_types.length }}
+                  {{ typesCovered(section, s.id) }}/{{ typesExpected(section, s.id) }}
                 </td>
                 <td class="text-xs text-muted" :title="outsideSummary(section, s.id) ? 'Active expenses in categories not marked for this type' : ''">
                   {{ outsideSummary(section, s.id) || '' }}
@@ -252,6 +320,40 @@ function sectionTitle(section) {
   color: #065f46;
   background: var(--color-success-bg, #ecfdf5);
 }
+.cell-progress {
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+.cell-not-needed {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+.cell-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.stat-progress {
+  color: #1d4ed8;
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: -0.5rem;
+  color: var(--color-gray-500, #6b7280);
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.swatch {
+  display: inline-block;
+  width: 1.5rem;
+  text-align: center;
+  border-radius: 0.25rem;
+  font-weight: 600;
+}
 .gap-dash {
   color: var(--color-gray-300, #d1d5db);
   font-weight: 400;
@@ -270,6 +372,12 @@ function sectionTitle(section) {
 }
 .coverage-table tbody tr:hover .cell-gap {
   background: #fff7ed;
+}
+.coverage-table tbody tr:hover .cell-progress {
+  background: #dbeafe;
+}
+.coverage-table tbody tr:hover .cell-not-needed {
+  background: #fee2e2;
 }
 .coverage-table tfoot th,
 .coverage-table tfoot td {

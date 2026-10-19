@@ -57,12 +57,12 @@ class SubjectTypeSerializer(ActivityLoggedSerializerMixin, serializers.ModelSeri
 
 class SubjectSerializer(ActivityLoggedSerializerMixin, serializers.ModelSerializer):
     activity_entity = 'subject'
-    activity_fields = {'name': 'name', 'type': 'subject_type_name'}
+    activity_fields = {'name': 'name', 'type': 'subject_type_name', 'is_active': 'is_active'}
     subject_type_name = serializers.CharField(source='subject_type.name', read_only=True, default=None)
 
     class Meta:
         model = Subject
-        fields = ['id', 'name', 'subject_type', 'subject_type_name', 'is_default', 'created_by']
+        fields = ['id', 'name', 'subject_type', 'subject_type_name', 'is_active', 'is_default', 'created_by']
         read_only_fields = ['id', 'is_default', 'created_by']
 
 

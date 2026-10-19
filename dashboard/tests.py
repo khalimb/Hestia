@@ -296,3 +296,54 @@ class CoverageSectionsTests(APITestCase):
         self.assertEqual([t['name'] for t in untyped['expense_types']], ['Rent', 'Takeaway', 'Water'])  # all
         self.assertEqual(untyped['matrix'][str(self.untyped.id)], {str(self.water.id): 1})
         self.assertEqual(resp.data['unassigned'], {'no_subject': 1, 'no_type': 0})
+
+
+class CoverageMarksAndInactiveSubjectsTests(APITestCase):
+    def setUp(self):
+        from expenses.models import SubjectType, Subject
+        self.user = User.objects.create_user(
+            email='bk@example.com', username='bk', first_name='B', password='supersecret123')
+        self.rent = ExpenseType.objects.create(name='Rent')
+        self.water = ExpenseType.objects.create(name='Water')
+        self.property = SubjectType.objects.create(name='Property')
+        self.property.expense_types.set([self.rent, self.water])
+        self.flat = Subject.objects.create(name='Flat', subject_type=self.property)
+        self.old = Subject.objects.create(name='Old flat', subject_type=self.property, is_active=False)
+        Expense.objects.create(name='Flat rent', amount='10', currency='GBP', recurrence_type='monthly',
+                               start_date=date(2026, 9, 1), subject=self.flat, expense_type=self.rent,
+                               created_by=self.user)
+        self.client.force_authenticate(self.user)
+
+    def mark(self, subject, etype, status_value):
+        return self.client.post(reverse('dashboard-coverage-mark'),
+                                {'subject': str(subject.id), 'expense_type': str(etype.id), 'status': status_value},
+                                format='json')
+
+    def test_inactive_subjects_are_left_out_of_coverage(self):
+        sections = self.client.get(reverse('dashboard-coverage')).data['sections']
+        self.assertEqual([s['name'] for s in sections[0]['subjects']], ['Flat'])
+
+    def test_mark_set_cycle_clear_and_activity(self):
+        from .models import CoverageMark
+        from activity.models import ActivityLog
+        resp = self.mark(self.flat, self.water, 'in_progress')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['status'], 'in_progress')
+        resp = self.mark(self.flat, self.water, 'not_needed')
+        self.assertEqual(resp.data['status'], 'not_needed')
+        self.assertEqual(CoverageMark.objects.count(), 1)                       # upsert, not a duplicate
+        sections = self.client.get(reverse('dashboard-coverage')).data['sections']
+        self.assertEqual(sections[0]['marks'], {str(self.flat.id): {str(self.water.id): 'not_needed'}})
+        resp = self.mark(self.flat, self.water, None)
+        self.assertIsNone(resp.data['status'])
+        self.assertEqual(CoverageMark.objects.count(), 0)
+        actions = list(ActivityLog.objects.filter(entity_type='coverage_mark')
+                       .order_by('created_at').values_list('action', flat=True))
+        self.assertEqual(actions, ['create', 'update', 'delete'])
+        self.assertEqual(self.mark(self.flat, self.water, 'bogus').status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_mark_on_a_cell_with_an_expense_is_not_reported(self):
+        self.mark(self.flat, self.rent, 'not_needed')        # Flat already has rent
+        sections = self.client.get(reverse('dashboard-coverage')).data['sections']
+        self.assertEqual(sections[0]['marks'], {})
+        self.assertEqual(sections[0]['matrix'][str(self.flat.id)], {str(self.rent.id): 1})

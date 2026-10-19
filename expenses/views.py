@@ -42,6 +42,7 @@ class SubjectTypeViewSet(GuardedDeleteMixin, viewsets.ModelViewSet):
 class SubjectViewSet(GuardedDeleteMixin, viewsets.ModelViewSet):
     queryset = Subject.objects.select_related('subject_type').all()
     serializer_class = SubjectSerializer
+    filterset_fields = ['is_active', 'subject_type']
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)

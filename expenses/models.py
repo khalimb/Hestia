@@ -39,6 +39,8 @@ class Subject(models.Model):
     subject_type = models.ForeignKey(
         SubjectType, on_delete=models.SET_NULL, null=True, blank=True, related_name='subjects',
     )
+    # Inactive subjects keep their history but drop out of Coverage and pick lists.
+    is_active = models.BooleanField(default=True)
     is_default = models.BooleanField(default=False)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,

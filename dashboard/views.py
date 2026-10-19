@@ -3,11 +3,15 @@ from django.core.exceptions import ValidationError
 from django.db.models import Sum, Count
 from django.utils import timezone
 from rest_framework.response import Response
+from rest_framework import generics
 from rest_framework.views import APIView
 from expenses.models import Subject, ExpenseType, Expense, Occurrence
 from expenses.services import ensure_occurrences_generated
 from transactions.models import Transaction
+from activity.services import record_activity
+
 from .analytics import spend_summary, breakdown_items, parse_window, GROUPS
+from .models import CoverageMark
 
 
 class DashboardSummaryView(APIView):
@@ -174,17 +178,26 @@ class DashboardCoverageView(APIView):
 
         all_types = list(ExpenseType.objects.order_by('name').values('id', 'name'))
         by_id = {t['id']: t for t in all_types}
+        # Manual marks on empty cells: subject -> {type: status}.
+        marks = {}
+        for m in CoverageMark.objects.values('subject_id', 'expense_type_id', 'status'):
+            marks.setdefault(m['subject_id'], {})[m['expense_type_id']] = m['status']
 
         def section(subject_type, subjects, type_ids):
             columns = [by_id[t] for t in type_ids if t in by_id] if type_ids is not None else all_types
             column_ids = {c['id'] for c in columns}
-            matrix, outside = {}, {}
+            matrix, outside, section_marks = {}, {}, {}
             for subj in subjects:
                 counts = pair_counts.get(subj['id'], {})
                 matrix[str(subj['id'])] = {str(t): n for t, n in counts.items() if t in column_ids}
                 extra = {by_id[t]['name']: n for t, n in counts.items() if t not in column_ids and t in by_id}
                 if extra:
                     outside[str(subj['id'])] = extra
+                # A mark only matters where no active expense exists.
+                cell_marks = {str(t): st for t, st in marks.get(subj['id'], {}).items()
+                              if t in column_ids and not counts.get(t)}
+                if cell_marks:
+                    section_marks[str(subj['id'])] = cell_marks
             return {
                 'subject_type': subject_type,
                 'subjects': [{'id': str(x['id']), 'name': x['name']} for x in subjects],
@@ -192,17 +205,20 @@ class DashboardCoverageView(APIView):
                 'matrix': matrix,
                 # subject id -> {category name: count} for expenses outside the type's categories
                 'outside': outside,
+                # subject id -> {type id: 'in_progress' | 'not_needed'} on empty cells
+                'marks': section_marks,
             }
 
         sections = []
         for st in SubjectType.objects.prefetch_related('expense_types').order_by('name'):
-            subjects = list(st.subjects.order_by('name').values('id', 'name'))
+            subjects = list(st.subjects.filter(is_active=True).order_by('name').values('id', 'name'))
             if not subjects:
                 continue   # a type nobody uses yet has nothing to cover
             type_ids = [t.id for t in st.expense_types.all()]
             sections.append(section({'id': str(st.id), 'name': st.name}, subjects, sorted(
                 type_ids, key=lambda t: by_id[t]['name'] if t in by_id else '')))
-        untyped = list(Subject.objects.filter(subject_type__isnull=True).order_by('name').values('id', 'name'))
+        untyped = list(Subject.objects.filter(subject_type__isnull=True, is_active=True)
+                       .order_by('name').values('id', 'name'))
         if untyped:
             sections.append(section(None, untyped, None))
 
@@ -261,3 +277,33 @@ class DashboardBreakdownItemsView(APIView):
         currency = request.query_params.get('currency', '').upper() or None
         normalise = request.query_params.get('normalise', '').upper() or None
         return Response(breakdown_items(start, end, group, group_id, currency, normalise_to=normalise))
+
+
+class DashboardCoverageMarkView(APIView):
+    """POST {subject, expense_type, status}: set a mark on an empty coverage
+    cell ('in_progress' | 'not_needed'), or clear it with status null."""
+
+    def post(self, request):
+        subject = generics.get_object_or_404(Subject, pk=request.data.get('subject'))
+        expense_type = generics.get_object_or_404(ExpenseType, pk=request.data.get('expense_type'))
+        status_value = request.data.get('status') or None
+        if status_value not in (None, CoverageMark.IN_PROGRESS, CoverageMark.NOT_NEEDED):
+            return Response({'detail': 'status must be in_progress, not_needed or null'}, status=400)
+        label = f'{subject.name} × {expense_type.name}'
+        existing = CoverageMark.objects.filter(subject=subject, expense_type=expense_type).first()
+        before = existing.status if existing else None
+        if status_value is None:
+            if existing:
+                mark_id = existing.pk          # delete() clears the pk
+                existing.delete()
+                record_activity('delete', 'coverage_mark', mark_id, label,
+                                {'status': {'from': before, 'to': None}})
+            return Response({'subject': str(subject.id), 'expense_type': str(expense_type.id), 'status': None})
+        mark, created = CoverageMark.objects.update_or_create(
+            subject=subject, expense_type=expense_type,
+            defaults={'status': status_value, 'updated_by': request.user})
+        if before != status_value:
+            record_activity('create' if created else 'update', 'coverage_mark', mark.pk, label,
+                            {'status': {'from': before, 'to': status_value}})
+        return Response({'subject': str(subject.id), 'expense_type': str(expense_type.id),
+                         'status': mark.status})

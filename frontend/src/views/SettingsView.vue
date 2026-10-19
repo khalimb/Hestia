@@ -195,6 +195,16 @@ async function handleSubjectSubmit() {
   }
 }
 
+async function toggleSubjectActive(subject) {
+  const deactivating = subject.is_active
+  if (deactivating && !confirm(`Deactivate "${subject.name}"? It disappears from Coverage and pick lists; its expenses and history stay.`)) return
+  try {
+    await store.updateSubject(subject.id, { is_active: !deactivating })
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to update subject.')
+  }
+}
+
 async function handleDeleteSubject(subject) {
   if (!confirm(`Delete subject "${subject.name}"?`)) return
   try {
@@ -774,14 +784,20 @@ function varTag(name) {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="subject in store.subjects" :key="subject.id">
-              <td style="font-weight:500">{{ subject.name }}</td>
+            <tr v-for="subject in store.subjects" :key="subject.id" :style="subject.is_active ? '' : 'opacity:0.55'">
+              <td style="font-weight:500">
+                {{ subject.name }}
+                <span v-if="!subject.is_active" class="badge badge-overdue" style="margin-left:0.375rem">Inactive</span>
+              </td>
               <td>
                 <span class="text-sm">{{ subject.subject_type_name || '—' }}</span>
                 <span class="text-xs text-muted"> · {{ subject.is_default ? 'Default' : 'Custom' }}</span>
               </td>
-              <td class="text-right">
+              <td class="text-right" style="white-space:nowrap">
                 <button @click="openEditSubject(subject)" class="btn btn-sm btn-outline">Edit</button>
+                <button @click="toggleSubjectActive(subject)" class="btn btn-sm btn-outline" style="margin-left:0.25rem" :style="subject.is_active ? 'color:var(--color-danger)' : ''">
+                  {{ subject.is_active ? 'Deactivate' : 'Reactivate' }}
+                </button>
                 <button v-if="!subject.is_default" @click="handleDeleteSubject(subject)" class="btn btn-sm btn-outline" style="margin-left:0.25rem; color:var(--color-danger)">Delete</button>
               </td>
             </tr>
